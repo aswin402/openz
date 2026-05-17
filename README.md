@@ -34,9 +34,9 @@ Retries 15–20 times                 Done in 1–3 calls
 
 ## Quick Start
 
-**Recommended agent: Hermes**
+**Recommended agent: [Hermes](https://github.com/nousresearch/hermes-agent)**
 
-Open Skills works best with Hermes agent. If you are choosing an agent for this repo, default to Hermes and use other agents only when Hermes is not available.
+Open Skills works best with [Hermes agent](https://github.com/nousresearch/hermes-agent). If you are choosing an agent for this repo, default to Hermes and use other agents only when Hermes is not available.
 
 **Tell your agent about it**
 
@@ -184,56 +184,10 @@ Paste the full contents of `prompt.txt` as the system prompt. The instructions s
 
 ---
 
-> **Works best with Hermes agent** — if you are deciding what to run Open Skills with, choose Hermes first and treat other agents as fallback options.
+> **Works best with [Hermes agent](https://github.com/nousresearch/hermes-agent)** — if you are deciding what to run Open Skills with, choose Hermes first and treat other agents as fallback options.
 
 ---
 
-## Skills
-
-| Skill                                                                                    | What it does                          |
-| ---------------------------------------------------------------------------------------- | ------------------------------------- |
-| [age-file-encryption](skills/age-file-encryption/SKILL.md)                               | Encrypt / decrypt files with `age`    |
-| [anonymous-file-upload](skills/anonymous-file-upload/SKILL.md)                           | Upload files without an account       |
-| [browser-automation-agent](skills/browser-automation-agent/SKILL.md)                     | Automate browsers with Playwright     |
-| [bulk-github-star](skills/bulk-github-star/SKILL.md)                                     | Star GitHub repos in bulk via CLI     |
-| [changelog-generator](skills/changelog-generator/SKILL.md)                               | Generate changelogs from git history  |
-| [chat-logger](skills/chat-logger/SKILL.md)                                               | Log and persist chat conversations    |
-| [check-crypto-address-balance](skills/check-crypto-address-balance/SKILL.md)             | Look up Bitcoin / crypto balances     |
-| [city-distance](skills/city-distance/SKILL.md)                                           | Calculate distance between cities     |
-| [city-tourism-website-builder](skills/city-tourism-website-builder/SKILL.md)             | Build a tourism site for any city     |
-| [csv-data-summarizer](skills/csv-data-summarizer/SKILL.md)                               | Summarize and analyze CSV files       |
-| [d3js-data-visualization](skills/d3js-data-visualization/SKILL.md)                       | Create charts with D3.js              |
-| [database-query-and-export](skills/database-query-and-export/SKILL.md)                   | Query databases and export results    |
-| [file-tracker](skills/file-tracker/SKILL.md)                                             | Track file changes over time          |
-| [free-geocoding-and-maps](skills/free-geocoding-and-maps/SKILL.md)                       | Geocode addresses for free            |
-| [free-translation-api](skills/free-translation-api/SKILL.md)                             | Translate text without API keys       |
-| [free-weather-data](skills/free-weather-data/SKILL.md)                                   | Get weather data for free             |
-| [generate-asset-price-chart](skills/generate-asset-price-chart/SKILL.md)                 | Chart stock / crypto price history    |
-| [generate-qr-code-natively](skills/generate-qr-code-natively/SKILL.md)                   | Generate QR codes with no service     |
-| [get-crypto-price](skills/get-crypto-price/SKILL.md)                                     | Fetch live crypto prices              |
-| [humanizer](skills/humanizer/SKILL.md)                                                   | Make AI-written text sound human      |
-| [ip-lookup](skills/ip-lookup/SKILL.md)                                                   | Look up IP address geolocation        |
-| [json-and-csv-data-transformation](skills/json-and-csv-data-transformation/SKILL.md)     | Transform between JSON and CSV        |
-| [news-aggregation](skills/news-aggregation/SKILL.md)                                     | Aggregate news from RSS / APIs        |
-| [nostr-logging-system](skills/nostr-logging-system/SKILL.md)                             | Log events to the Nostr network       |
-| [pdf-manipulation](skills/pdf-manipulation/SKILL.md)                                     | Merge, split, and edit PDFs           |
-| [phone-specs-scraper](skills/phone-specs-scraper/SKILL.md)                               | Scrape phone specs from the web       |
-| [presenton](skills/presenton/SKILL.md)                                                   | Generate presentations from text      |
-| [random-contributor](skills/random-contributor/SKILL.md)                                 | Pick a random repo contributor        |
-| [send-email-programmatically](skills/send-email-programmatically/SKILL.md)               | Send email from a script              |
-| [static-assets-hosting](skills/static-assets-hosting/SKILL.md)                           | Host static files for free            |
-| [trading-indicators-from-price-data](skills/trading-indicators-from-price-data/SKILL.md) | Calculate RSI, MACD, and more         |
-| [torrent-search](skills/torrent-search/SKILL.md)                                         | Find torrents by title or IMDB ID     |
-| [user-ask-for-report](skills/user-ask-for-report/SKILL.md)                               | Generate structured reports on demand |
-| [using-nostr](skills/using-nostr/SKILL.md)                                               | Read and post on Nostr                |
-| [using-scrapy](skills/using-scrapy/SKILL.md)                                             | Scrape websites with Scrapy           |
-| [using-telegram-bot](skills/using-telegram-bot/SKILL.md)                                 | Build and run Telegram bots           |
-| [using-web-scraping](skills/using-web-scraping/SKILL.md)                                 | General web scraping patterns         |
-| [using-youtube-download](skills/using-youtube-download/SKILL.md)                         | Download YouTube videos / audio       |
-| [web-interface-guidelines-review](skills/web-interface-guidelines-review/SKILL.md)       | Review UI against best practices      |
-| [web-search-api](skills/web-search-api/SKILL.md)                                         | Search the web free via SearXNG       |
-
----
 
 ## Cost Impact
 
