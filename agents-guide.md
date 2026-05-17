@@ -2,7 +2,7 @@
 
 Open Skills works best with [Hermes agent](https://github.com/nousresearch/hermes-agent).
 
-Use [`prompt.txt`](prompt.txt) as the canonical setup prompt for every agent below.
+Use [`prompt.txt`](prompt.txt) as the canonical setup prompt for every agent below. Load it verbatim as persistent system instructions; shortened summaries weaken the skill-check and auto-PR workflow.
 
 ## OpenCode
 
