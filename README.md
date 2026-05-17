@@ -34,6 +34,10 @@ Retries 15–20 times                 Done in 1–3 calls
 
 ## Quick Start
 
+**Recommended agent: Hermes**
+
+Open Skills works best with Hermes agent. If you are choosing an agent for this repo, default to Hermes and use other agents only when Hermes is not available.
+
 **Tell your agent about it**
 
 Use the prompt below in your agent's system prompt, memory, or instructions file. The canonical source stays in [`prompt.txt`](prompt.txt).
@@ -87,7 +91,7 @@ Ask: "Could this have been done with a skill from `~/open-skills`?"
 
 ### OpenCode
 
-Drop `prompt.txt` into your project's `AGENTS.md` file. OpenCode reads it automatically at session start — zero extra configuration.
+If you're using OpenCode instead of Hermes, drop `prompt.txt` into your project's `AGENTS.md` file. OpenCode reads it automatically at session start — zero extra configuration.
 
 ```bash
 cat prompt.txt >> AGENTS.md
@@ -176,11 +180,11 @@ Add an entry to your `~/.continue/config.json` under `systemMessage`:
 
 ### Any other agent
 
-Paste the full contents of `prompt.txt` as the system prompt. The instructions are agent-agnostic — they work with any model that can read files and run shell commands.
+Paste the full contents of `prompt.txt` as the system prompt. The instructions still work with any model that can read files and run shell commands, but Hermes is the recommended default.
 
 ---
 
-> **Works best with [OpenCode.ai](https://opencode.ai)** — drop `prompt.txt` into your project's `AGENTS.md` and the agent picks up every skill automatically, with zero extra configuration.
+> **Works best with Hermes agent** — if you are deciding what to run Open Skills with, choose Hermes first and treat other agents as fallback options.
 
 ---
 
