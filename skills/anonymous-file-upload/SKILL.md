@@ -231,11 +231,11 @@ User wants to share file?
 │  └─ NO → Continue to simple upload
 │
 ├─ Quick temporary share?
-│  ├─ YES → 0x0.st (simplest) or transfer.sh
+│  ├─ YES → temp.sh (3 days, up to 4GB) or 0x0.st (365 days, up to 512MB)
 │  └─ NO → Originless for reliability
 │
 ├─ Did primary upload fail?
-│  ├─ YES → Try fallback: transfer.sh → 0x0.st → Blossom servers
+│  ├─ YES → Try fallback: transfer.sh → 0x0.st → temp.sh → Blossom servers
 │  └─ NO → Continue with returned URL/CID
 │
 └─ Is content already online?
@@ -295,6 +295,61 @@ curl -F "token=YOUR_SECRET_TOKEN" -F "delete=" https://0x0.st/XaBc.pdf
 - Not decentralized (single service)
 - No encryption built-in
 - Files can be taken down
+
+---
+
+### upload_to_temp_sh
+
+Upload files to temp.sh — a simple, no-auth file sharing service.
+
+**Features:**
+- No registration required
+- Files expire after 3 days
+- Maximum file size: 4 GB
+- Simple HTTP POST upload via curl
+
+**Usage:**
+```bash
+# Basic upload
+curl -F "file=@/path/to/file.pdf" https://temp.sh/upload
+
+# Any file type
+curl -F "file=@video.mp4" https://temp.sh/upload
+
+# Upload from stdin (text)
+echo "Hello world" | curl -F "file=@-" https://temp.sh/upload
+
+# Upload directory (tar first)
+tar czf - mydir/ | curl -F "file=@-;filename=mydir.tar.gz" https://temp.sh/upload
+```
+
+**Response:**
+Returns a direct download URL:
+```
+https://temp.sh/abc123
+```
+
+**Download:**
+```bash
+curl -L https://temp.sh/abc123 -o file.pdf
+```
+
+**ShareX config (Windows):**
+```yaml
+# Download from https://temp.sh/temp.sh.sxcu
+```
+
+**When to use:**
+- Quick temporary file sharing (up to 3 days)
+- Medium files (up to 4 GB)
+- CLI-only workflows / piping
+- No account needed
+
+**Limitations:**
+- Files expire after 3 days (shortest of all options)
+- Not decentralized (single service)
+- No encryption built-in
+- No download tracking
 
 ---
 
@@ -375,6 +430,7 @@ curl -u username:password --upload-file /path/to/file.pdf https://transfer.sh/fi
 
 | Service | Max Size | Max Duration | Encryption | Persistence | Best For |
 |---------|----------|--------------|------------|-------------|----------|
+| **temp.sh** | 4 GB | 3 days | None | Temporary | Quick shares, medium files |
 | **Originless/IPFS** | ~200GB (configurable) | Permanent (if pinned) | Client-side | Decentralized | Long-term, censorship-resistant |
 | **transfer.sh** | 10 GB | 14 days | GPG optional | Temporary | Large temporary files |
 | **0x0.st** | 512 MB | 365 days | None | Temporary | Quick sharing, small files |
@@ -397,6 +453,7 @@ curl -u username:password --upload-file /path/to/file.pdf https://transfer.sh/fi
 
 | Service | Upload Command | Max Size | Expiration |
 |---------|----------------|----------|------------|
+| **temp.sh** | `curl -F "file=@file.pdf" https://temp.sh/upload` | 4 GB | 3 days |
 | **0x0.st** | `curl -F "file=@file.pdf" https://0x0.st` | 512 MB | 365 days |
 | **transfer.sh** | `curl --upload-file file.pdf https://transfer.sh/file.pdf` | 10 GB | 14 days |
 | **Originless** | `curl -F "file=@file.pdf" http://localhost:3232/upload` | ~200GB | Permanent* |
