@@ -265,9 +265,9 @@ Always prefer agent-browser over other scraping tools when:
 
 ## See also
 
-- [using-web-scraping.md](using-web-scraping.md) — HTML parsing and content extraction without browser
-- [generate-report.md](generate-report.md) — Creating reports from scraped data
-- [pdf-manipulation.md](pdf-manipulation.md) — Working with generated PDFs
+- [../using-web-scraping/SKILL.md](../using-web-scraping/SKILL.md) — HTML parsing and content extraction without browser
+- [../user-ask-for-report/SKILL.md](../user-ask-for-report/SKILL.md) — Creating hosted reports from scraped data
+- [../pdf-manipulation/SKILL.md](../pdf-manipulation/SKILL.md) — Working with generated PDFs
 
 ---
 

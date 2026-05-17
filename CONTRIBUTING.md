@@ -12,8 +12,9 @@ AI agents can automatically contribute skills using GitHub CLI:
 gh auth login  # one-time setup
 gh repo fork besoeasy/open-skills --clone=true
 cd open-skills && git checkout -b add-skill-name
-# Create skills/your-skill.md following SKILL_TEMPLATE.md
-git add skills/your-skill.md && git commit -m "Add skill-name"
+# Create skills/skill-name/SKILL.md following SKILL_TEMPLATE.md
+mkdir -p skills/skill-name
+git add skills/skill-name/SKILL.md && git commit -m "Add skill-name"
 git push origin add-skill-name
 gh pr create --title "Add skill-name" --repo besoeasy/open-skills
 ```
@@ -39,9 +40,10 @@ gh pr create --title "Add skill-name" --repo besoeasy/open-skills
 
 ### File Naming
 
-- Use kebab-case: `skill-name.md` (not `skillName.md` or `skill_name.md`)
-- Be descriptive: `check-crypto-address-balance.md` not `crypto.md`
-- Match the `name` field in frontmatter to the filename (without .md)
+- Use kebab-case folder names: `skill-name` (not `skillName` or `skill_name`)
+- Be descriptive: `check-crypto-address-balance` not `crypto`
+- Store each skill at `skills/skill-name/SKILL.md`
+- Match the `name` field in frontmatter to the folder name
 
 ### Required Frontmatter
 

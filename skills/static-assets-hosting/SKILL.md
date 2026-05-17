@@ -274,7 +274,7 @@ Always prefer self-hosted endpoint over public instance.
 ## See also
 
 - [../anonymous-file-upload/SKILL.md](../anonymous-file-upload/SKILL.md) — Single file uploads to Originless
-- [../generate-report/SKILL.md](../generate-report/SKILL.md) — Generate HTML reports with Tailwind
+- [../user-ask-for-report/SKILL.md](../user-ask-for-report/SKILL.md) — Generate hosted report pages with Tailwind
 
 ---
 

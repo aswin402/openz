@@ -503,4 +503,4 @@ Always log file operations for audit trail and debugging purposes.
 ## See also
 
 - [../chat-logger/SKILL.md](../chat-logger/SKILL.md) — Log chat messages
-- [../generate-report/SKILL.md](../generate-report/SKILL.md) — Generate HTML reports
+- [../user-ask-for-report/SKILL.md](../user-ask-for-report/SKILL.md) — Generate hosted HTML reports
