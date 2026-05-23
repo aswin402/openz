@@ -456,6 +456,7 @@ async fn run_agent_job(
         security: Some(subagent_ctx.policy.clone()),
         memory: None,
         is_subagent: false,
+        tui_sender: None,
     };
     let run_result = match job.session_target {
         SessionTarget::Main | SessionTarget::Isolated => {

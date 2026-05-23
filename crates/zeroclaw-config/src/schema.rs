@@ -12778,14 +12778,16 @@ impl Default for Config {
 
 fn default_config_and_data_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
-    // The second value is the shared instance data directory
-    // (databases + state files). Per-agent identity + markdown lives
-    // at `<config-dir>/agents/<alias>/workspace/`, resolved separately
-    // via `Config::agent_workspace_dir`.
     Ok((config_dir.clone(), config_dir.join("data")))
 }
 
 fn default_config_dir() -> Result<PathBuf> {
+    if let Ok(custom) = std::env::var("OPENZ_CONFIG_DIR") {
+        let custom = custom.trim();
+        if !custom.is_empty() {
+            return Ok(expand_tilde_path(custom));
+        }
+    }
     if let Ok(custom) = std::env::var("ZEROCLAW_CONFIG_DIR") {
         let custom = custom.trim();
         if !custom.is_empty() {
@@ -12793,35 +12795,32 @@ fn default_config_dir() -> Result<PathBuf> {
         }
     }
 
-    if let Ok(home) = std::env::var("HOME")
+    let home = if let Ok(home) = std::env::var("HOME")
         && !home.is_empty()
     {
-        return Ok(PathBuf::from(home).join(".zeroclaw"));
-    }
+        PathBuf::from(home)
+    } else {
+        UserDirs::new()
+            .map(|u| u.home_dir().to_path_buf())
+            .context("Could not find home directory")?
+    };
 
-    let home = UserDirs::new()
-        .map(|u| u.home_dir().to_path_buf())
-        .context("Could not find home directory")?;
-    Ok(home.join(".zeroclaw"))
+    let openz_dir = home.join(".openz");
+    let zeroclaw_dir = home.join(".zeroclaw");
+
+    if openz_dir.exists() {
+        Ok(openz_dir)
+    } else if zeroclaw_dir.exists() {
+        Ok(zeroclaw_dir)
+    } else {
+        Ok(openz_dir)
+    }
 }
 
-/// Build a default path string by joining `relative` onto the resolved
-/// platform config dir. The form sees the resolved absolute path
-/// (`/home/<user>/.zeroclaw/<relative>` on Linux,
-/// `C:\Users\<user>\.zeroclaw\<relative>` on Windows, etc.) instead of a
-/// literal `~/...` token that doesn't expand on Windows. Falls back to
-/// `~/.zeroclaw/<relative>` if the platform dir can't be resolved (rare —
-/// e.g. no HOME and `directories::UserDirs` returns None); the runtime's
-/// `expand_tilde_path()` handles that literal at use-time.
-///
-/// Switching to platform-native config locations (`~/Library/Application
-/// Support/zeroclaw/` on macOS, `%APPDATA%\zeroclaw\` on Windows) is the
-/// schema-v3 follow-up tracked in #5947 — that needs a migration to move
-/// existing users' configs.
 fn default_path_under_config_dir(relative: &str) -> String {
     match default_config_dir() {
         Ok(dir) => dir.join(relative).to_string_lossy().into_owned(),
-        Err(_) => format!("~/.zeroclaw/{relative}"),
+        Err(_) => format!("~/.openz/{relative}"),
     }
 }
 
@@ -12831,24 +12830,91 @@ pub fn resolve_config_dir_for_data(data_dir: &Path) -> (PathBuf, PathBuf) {
         return (data_config_dir.clone(), data_config_dir.join("data"));
     }
 
+    let legacy_config_dir_openz = data_dir.parent().map(|parent| parent.join(".openz"));
+    if let Some(ref legacy_dir) = legacy_config_dir_openz {
+        if legacy_dir.join("config.toml").exists() {
+            return (legacy_dir.clone(), data_config_dir);
+        }
+    }
+
     let legacy_config_dir = data_dir.parent().map(|parent| parent.join(".zeroclaw"));
     if let Some(legacy_dir) = legacy_config_dir {
         if legacy_dir.join("config.toml").exists() {
             return (legacy_dir, data_config_dir);
         }
 
-        // Accept either the new "data" suffix or the legacy "workspace"
-        // suffix; the V2->V3 filesystem migration renames the on-disk
-        // dir but operator-set env-var paths from before the rename
-        // still resolve correctly.
         if data_dir.file_name().is_some_and(|name| {
             name == std::ffi::OsStr::new("data") || name == std::ffi::OsStr::new("workspace")
         }) {
+            if let Some(ref legacy_dir_openz) = legacy_config_dir_openz {
+                if legacy_dir_openz.exists() {
+                    return (legacy_dir_openz.clone(), data_config_dir);
+                }
+            }
             return (legacy_dir, data_config_dir);
         }
     }
 
     (data_config_dir.clone(), data_config_dir.join("data"))
+}
+
+async fn resolve_runtime_config_dirs(
+    default_zeroclaw_dir: &Path,
+    default_data_dir: &Path,
+) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
+    let custom_config_dir_val = std::env::var("OPENZ_CONFIG_DIR")
+        .or_else(|_| std::env::var("ZEROCLAW_CONFIG_DIR"));
+    if let Ok(custom_config_dir) = custom_config_dir_val {
+        let custom_config_dir = custom_config_dir.trim();
+        if !custom_config_dir.is_empty() {
+            if std::env::var("OPENZ_DATA_DIR").is_ok() || std::env::var("ZEROCLAW_DATA_DIR").is_ok() {
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "CONFIG_DIR is set; DATA_DIR is ignored \
+                     (CONFIG_DIR pins both the config directory and the data \
+                     directory under it)."
+                );
+            }
+            let zeroclaw_dir = expand_tilde_path(custom_config_dir);
+            return Ok((
+                zeroclaw_dir.clone(),
+                zeroclaw_dir.join("data"),
+                ConfigResolutionSource::EnvConfigDir,
+            ));
+        }
+    }
+
+    let custom_data_val = std::env::var("OPENZ_DATA_DIR")
+        .or_else(|_| std::env::var("ZEROCLAW_DATA_DIR"));
+    if let Ok(custom_data) = custom_data_val
+        && !custom_data.trim().is_empty()
+    {
+        let expanded = expand_tilde_path(&custom_data);
+        let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
+        return Ok((zeroclaw_dir, data_dir, ConfigResolutionSource::EnvDataDir));
+    }
+
+    let custom_workspace_val = std::env::var("OPENZ_WORKSPACE")
+        .or_else(|_| std::env::var("ZEROCLAW_WORKSPACE"));
+    if let Ok(custom_workspace) = custom_workspace_val
+        && !custom_workspace.is_empty()
+    {
+        let expanded = expand_tilde_path(&custom_workspace);
+        let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
+        return Ok((
+            zeroclaw_dir,
+            data_dir,
+            ConfigResolutionSource::EnvWorkspaceLegacy,
+        ));
+    }
+
+    Ok((
+        default_zeroclaw_dir.to_path_buf(),
+        default_data_dir.to_path_buf(),
+        ConfigResolutionSource::DefaultConfigDir,
+    ))
 }
 
 /// Resolve the current runtime config/data directories for onboarding flows.
@@ -12914,100 +12980,7 @@ fn expand_tilde_path(path: &str) -> PathBuf {
     PathBuf::from(expanded_str)
 }
 
-async fn resolve_runtime_config_dirs(
-    default_zeroclaw_dir: &Path,
-    default_data_dir: &Path,
-) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
-    if let Ok(custom_config_dir) = std::env::var("ZEROCLAW_CONFIG_DIR") {
-        let custom_config_dir = custom_config_dir.trim();
-        if !custom_config_dir.is_empty() {
-            // If the operator ALSO set ZEROCLAW_DATA_DIR or
-            // ZEROCLAW_WORKSPACE, CONFIG_DIR wins; surface the
-            // collision so they know which one took effect.
-            if std::env::var("ZEROCLAW_DATA_DIR")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .is_some()
-            {
-                ::zeroclaw_log::record!(
-                    WARN,
-                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
-                    "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_DATA_DIR is ignored \
-                     (CONFIG_DIR pins both the config directory and the data \
-                     directory under it)."
-                );
-            }
-            if std::env::var("ZEROCLAW_WORKSPACE")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .is_some()
-            {
-                ::zeroclaw_log::record!(
-                    WARN,
-                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
-                    "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_WORKSPACE (deprecated) \
-                     is ignored. ZEROCLAW_WORKSPACE will be removed in a future \
-                     release; switch any remaining references to ZEROCLAW_DATA_DIR."
-                );
-            }
-            let zeroclaw_dir = expand_tilde_path(custom_config_dir);
-            return Ok((
-                zeroclaw_dir.clone(),
-                zeroclaw_dir.join("data"),
-                ConfigResolutionSource::EnvConfigDir,
-            ));
-        }
-    }
 
-    if let Ok(custom_data) = std::env::var("ZEROCLAW_DATA_DIR")
-        && !custom_data.trim().is_empty()
-    {
-        if std::env::var("ZEROCLAW_WORKSPACE")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .is_some()
-        {
-            ::zeroclaw_log::record!(
-                WARN,
-                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
-                "ZEROCLAW_DATA_DIR and ZEROCLAW_WORKSPACE are both set; \
-                 ZEROCLAW_WORKSPACE (deprecated) is ignored. \
-                 ZEROCLAW_WORKSPACE will be removed in a future release."
-            );
-        }
-        let expanded = expand_tilde_path(&custom_data);
-        let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
-        return Ok((zeroclaw_dir, data_dir, ConfigResolutionSource::EnvDataDir));
-    }
-
-    if let Ok(custom_workspace) = std::env::var("ZEROCLAW_WORKSPACE")
-        && !custom_workspace.is_empty()
-    {
-        ::zeroclaw_log::record!(
-            WARN,
-            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
-            "ZEROCLAW_WORKSPACE is deprecated; use ZEROCLAW_DATA_DIR instead. \
-             ZEROCLAW_WORKSPACE will be removed in a future release."
-        );
-        let expanded = expand_tilde_path(&custom_workspace);
-        let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
-        return Ok((
-            zeroclaw_dir,
-            data_dir,
-            ConfigResolutionSource::EnvWorkspaceLegacy,
-        ));
-    }
-
-    Ok((
-        default_zeroclaw_dir.to_path_buf(),
-        default_data_dir.to_path_buf(),
-        ConfigResolutionSource::DefaultConfigDir,
-    ))
-}
 
 fn config_dir_creation_error(path: &Path) -> String {
     format!(

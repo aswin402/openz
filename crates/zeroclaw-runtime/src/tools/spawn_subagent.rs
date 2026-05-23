@@ -165,6 +165,7 @@ impl Tool for SpawnSubagentTool {
             security: Some(subagent_ctx.policy.clone()),
             memory: None,
             is_subagent: true,
+            tui_sender: None,
         };
         let parent_alias = subagent_ctx.parent_alias.clone();
         let run_result = Box::pin(scope!(

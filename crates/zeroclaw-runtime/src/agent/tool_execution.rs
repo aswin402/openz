@@ -46,6 +46,43 @@ pub async fn execute_one_tool(
     cancellation_token: Option<&CancellationToken>,
     receipt_generator: Option<&super::tool_receipts::ReceiptGenerator>,
 ) -> Result<ToolExecutionOutcome> {
+    crate::agent::loop_::emit_tui_event(crate::agent::tui_events::RuntimeEvent::ToolStarted(
+        call_name.to_string(),
+    ));
+
+    let res = execute_one_tool_inner(
+        call_name,
+        call_arguments,
+        tool_call_id,
+        tools_registry,
+        activated_tools,
+        observer,
+        cancellation_token,
+        receipt_generator,
+    ).await;
+
+    let success = match &res {
+        Ok(outcome) => outcome.success,
+        Err(_) => false,
+    };
+    crate::agent::loop_::emit_tui_event(crate::agent::tui_events::RuntimeEvent::ToolFinished {
+        name: call_name.to_string(),
+        success,
+    });
+
+    res
+}
+
+async fn execute_one_tool_inner(
+    call_name: &str,
+    call_arguments: serde_json::Value,
+    tool_call_id: Option<&str>,
+    tools_registry: &[Box<dyn Tool>],
+    activated_tools: Option<&std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
+    observer: &dyn Observer,
+    cancellation_token: Option<&CancellationToken>,
+    receipt_generator: Option<&super::tool_receipts::ReceiptGenerator>,
+) -> Result<ToolExecutionOutcome> {
     // Serialize arguments once and carry the full JSON into both observer
     // events. Previously the start event received a 300-char summary and the
     // completion event received no arguments at all, which made tool spans

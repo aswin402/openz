@@ -10,6 +10,7 @@ pub mod history;
 pub mod history_pruner;
 pub mod loop_;
 pub mod loop_detector;
+pub mod tui;
 pub mod memory_loader;
 pub mod personality;
 pub mod personality_templates;
@@ -56,7 +57,10 @@ impl ::zeroclaw_api::attribution::Attributable for AgentAttribution<'_> {
 #[cfg(test)]
 mod tests;
 
+pub mod tui_events;
+
 #[allow(unused_imports)]
 pub use agent::{Agent, AgentBuilder, TurnEvent};
 #[allow(unused_imports)]
 pub use loop_::{process_message, run};
+pub use tui_events::{LspStatus, RuntimeEvent};

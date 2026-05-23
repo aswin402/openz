@@ -29,6 +29,21 @@ static PERIPHERAL_TOOLS_FN: std::sync::OnceLock<PeripheralToolsFn> = std::sync::
 pub fn register_peripheral_tools_fn(f: PeripheralToolsFn) {
     let _ = PERIPHERAL_TOOLS_FN.set(f);
 }
+
+tokio::task_local! {
+    pub static TUI_SENDER: Option<tokio::sync::mpsc::Sender<crate::agent::tui_events::RuntimeEvent>>;
+}
+
+pub fn emit_tui_event(event: crate::agent::tui_events::RuntimeEvent) {
+    let _ = TUI_SENDER.try_with(|sender| {
+        if let Some(s) = sender {
+            let s = s.clone();
+            tokio::spawn(async move {
+                let _ = s.send(event).await;
+            });
+        }
+    });
+}
 use crate::cost::types::BudgetCheck;
 use crate::observability::{self, Observer, ObserverEvent};
 use crate::platform;
@@ -1511,6 +1526,12 @@ pub async fn run_tool_call_loop(
             multimodal::prepare_messages_for_provider(history, multimodal_config).await?;
 
         // ── Progress: LLM thinking ────────────────────────────
+        emit_tui_event(crate::agent::tui_events::RuntimeEvent::ModelSelected {
+            provider: active_model_provider_name.to_string(),
+            model: active_model.to_string(),
+        });
+        emit_tui_event(crate::agent::tui_events::RuntimeEvent::ThinkingStarted);
+
         if let Some(ref tx) = on_delta {
             let phase = if iteration == 0 {
                 "\u{1f914} Thinking...\n".to_string()
@@ -1741,10 +1762,17 @@ pub async fn run_tool_call_loop(
                 });
 
                 // Record cost via task-local tracker (no-op when not scoped)
-                let _ = resp
+                let cost_info = resp
                     .usage
                     .as_ref()
                     .and_then(|usage| record_tool_loop_cost_usage(provider_name, model, usage));
+
+                let cost_usd = cost_info.as_ref().map(|(_, cost)| *cost);
+                emit_tui_event(crate::agent::tui_events::RuntimeEvent::ThinkingFinished {
+                    prompt_tokens: resp_input_tokens,
+                    completion_tokens: resp_output_tokens,
+                    cost_usd,
+                });
 
                 let mut response_text = if tool_specs.is_empty() {
                     strip_think_tags(resp.text_or_empty())
@@ -1886,6 +1914,13 @@ pub async fn run_tool_call_loop(
             }
             Err(e) => {
                 let safe_error = zeroclaw_providers::sanitize_api_error(&e.to_string());
+                emit_tui_event(crate::agent::tui_events::RuntimeEvent::ThinkingFinished {
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    cost_usd: None,
+                });
+                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Error(safe_error.clone()));
+
                 observer.record_event(&ObserverEvent::LlmResponse {
                     model_provider: provider_name.to_string(),
                     model: model.to_string(),
@@ -2829,6 +2864,7 @@ pub struct AgentRunOverrides {
     /// underway. Default `false` keeps top-level / cron-launched /
     /// CLI-launched agents at depth 0.
     pub is_subagent: bool,
+    pub tui_sender: Option<tokio::sync::mpsc::Sender<crate::agent::tui_events::RuntimeEvent>>,
 }
 
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -2885,6 +2921,7 @@ pub async fn run(
         memory_namespace = %memory_composite,
     );
     let __zc_body = async move {
+        let mut config = config;
         let agent_alias: &str = __zc_alias.as_str();
         // ── Wire up agnostic subsystems ──────────────────────────────
         let base_observer = observability::create_observer(&config.observability);
@@ -2959,7 +2996,7 @@ pub async fn run(
             &security,
             &risk_profile,
             agent_alias,
-            runtime,
+            runtime.clone(),
             mem.clone(),
             composio_key,
             composio_entity_id,
@@ -3379,7 +3416,7 @@ pub async fn run(
 
         // ── Approval manager (supervised mode) ───────────────────────
         let approval_manager = if interactive {
-            Some(ApprovalManager::from_risk_profile(&risk_profile))
+            Some(Arc::new(ApprovalManager::from_risk_profile(&risk_profile)))
         } else {
             None
         };
@@ -3510,10 +3547,16 @@ pub async fn run(
                 format!("{context}[{now}] {effective_msg}")
             };
 
-            let mut history = vec![
-                ChatMessage::system(&system_prompt),
-                ChatMessage::user(&enriched),
-            ];
+            let mut history = if let Some(path) = session_state_file.as_deref() {
+                let mut h = load_interactive_session_history(path, &system_prompt)?;
+                h.push(ChatMessage::user(&enriched));
+                h
+            } else {
+                vec![
+                    ChatMessage::system(&system_prompt),
+                    ChatMessage::user(&enriched),
+                ]
+            };
 
             // Prune history for token efficiency (when enabled).
             if agent.history_pruning.enabled {
@@ -3545,7 +3588,7 @@ pub async fn run(
                             &model_name,
                             effective_temperature,
                             false,
-                            approval_manager.as_ref(),
+                            approval_manager.as_deref(),
                             channel_name,
                             None,
                             &config.multimodal,
@@ -3664,8 +3707,170 @@ pub async fn run(
             println!("{response}");
             observer.record_event(&ObserverEvent::TurnComplete);
         } else {
-            println!("🦀 ZeroClaw Interactive Mode");
-            println!("Type /help for commands.\n");
+            println!("{}", console::style("  ___  ____  _____ _   _ _____").cyan().bold());
+            println!("{}", console::style(" / _ \\|  _ \\| ____| \\ | |__  /").cyan().bold());
+            println!("{}", console::style("| | | | |_) |  _| |  \\| | / / ").cyan().bold());
+            println!("{}", console::style("| |_| |  __/| |___| |\\  |/ /_ ").cyan().bold());
+            println!("{}", console::style(" \\___/|_|   |_____|_| \\_/____|").cyan().bold());
+            println!();
+            println!("  {}", console::style("openz - The minimal, self-improving, cutting-edge AI Agent CLI & TUI.").bold());
+            println!("  Type {} for commands, or start chatting!\n", console::style("/help").yellow().bold());
+
+            // Print Startup Status Dashboard
+            let is_tui_active = TUI_SENDER.try_with(|sender| sender.is_some()).unwrap_or(false);
+            if is_tui_active {
+                let (term_w, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                let header_title = "── Status Dashboard ";
+                let remaining_len = (term_w as usize).saturating_sub(header_title.chars().count());
+                let dashes = "─".repeat(remaining_len);
+                println!("{}{}", console::style(header_title).bold(), console::style(dashes).dim());
+
+                let lsp_status = if which::which("rust-analyzer").is_ok() { "Active" } else { "Inactive" };
+                
+                let mcp_servers: Vec<String> = config.mcp.servers.iter().map(|s| s.name.clone()).collect();
+                let mcp_str = if mcp_servers.is_empty() {
+                    "none".to_string()
+                } else {
+                    let joined = mcp_servers.join(", ");
+                    if joined.len() > 30 {
+                        let mut fit_mcp = Vec::new();
+                        let mut current_len = 0;
+                        for name in &mcp_servers {
+                            if current_len + name.len() + 2 > 25 {
+                                break;
+                            }
+                            fit_mcp.push(name.clone());
+                            current_len += name.len() + 2;
+                        }
+                        let remaining = mcp_servers.len() - fit_mcp.len();
+                        if remaining > 0 {
+                            format!("{}, ... (+{} more)", fit_mcp.join(", "), remaining)
+                        } else {
+                            joined
+                        }
+                    } else {
+                        joined
+                    }
+                };
+
+                let skills_str = if skills.is_empty() {
+                    "none".to_string()
+                } else {
+                    let names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
+                    let joined = names.join(", ");
+                    if joined.len() > 50 {
+                        let mut fit_names = Vec::new();
+                        let mut current_len = 0;
+                        for name in &names {
+                            if current_len + name.len() + 2 > 45 {
+                                break;
+                            }
+                            fit_names.push(name.clone());
+                            current_len += name.len() + 2;
+                        }
+                        let remaining = names.len() - fit_names.len();
+                        if remaining > 0 {
+                            format!("{}, ... (+{} more)", fit_names.join(", "), remaining)
+                        } else {
+                            joined
+                        }
+                    } else {
+                        joined
+                    }
+                };
+
+                let todos = crate::agent::tui::load_todos();
+                let checklist_status = if todos.is_empty() {
+                    "none".to_string()
+                } else {
+                    let completed = todos.iter().filter(|t| t.checked).count();
+                    let total = todos.len();
+                    format!("{}/{} tasks completed", completed, total)
+                };
+
+                let strip_ansi = |s: &str| -> String {
+                    let mut result = String::new();
+                    let mut in_esc = false;
+                    let mut in_bracket = false;
+                    for c in s.chars() {
+                        if c == '\x1b' {
+                            in_esc = true;
+                            continue;
+                        }
+                        if in_esc {
+                            if c == '[' {
+                                in_bracket = true;
+                            } else {
+                                in_esc = false;
+                                in_bracket = false;
+                            }
+                            continue;
+                        }
+                        if in_bracket {
+                            if c.is_ascii_alphabetic() {
+                                in_esc = false;
+                                in_bracket = false;
+                            }
+                            continue;
+                        }
+                        result.push(c);
+                    }
+                    result
+                };
+
+                let display_width = |s: &str| -> usize {
+                    let stripped = strip_ansi(s);
+                    stripped.chars().map(|c| {
+                        let val = c as u32;
+                        if c.is_ascii() || val < 0x2000 {
+                            1
+                        } else {
+                            2
+                        }
+                    }).sum()
+                };
+
+                let pad_to_width = |s: &str, width: usize| -> String {
+                    let current = display_width(s);
+                    if current >= width {
+                        s.to_string()
+                    } else {
+                        let padding = " ".repeat(width - current);
+                        format!("{}{}", s, padding)
+                    }
+                };
+
+                let col1_l1 = format!("  🤖 Model: {}/{}", console::style(&provider_name).cyan(), console::style(&model_name).cyan().bold());
+                let col1_l2 = format!("  🛠  MCP: {}", if mcp_str == "none" { console::style("none").dim().to_string() } else { console::style(&mcp_str).cyan().to_string() });
+                let w1 = std::cmp::max(display_width(&col1_l1), display_width(&col1_l2)) + 2;
+
+                let col2_l1 = format!("  💵 Cost: {} ({})", console::style("$0.00").green(), console::style("0 tokens").dim());
+                let col2_l2 = format!("  📦 Skills: {}", if skills_str == "none" { console::style("none").dim().to_string() } else { console::style(&skills_str).cyan().to_string() });
+                let w2 = std::cmp::max(display_width(&col2_l1), display_width(&col2_l2)) + 2;
+
+                println!(
+                    "{} {} {} {}   💡 LSP: {}",
+                    pad_to_width(&col1_l1, w1),
+                    console::style("│").dim(),
+                    pad_to_width(&col2_l1, w2),
+                    console::style("│").dim(),
+                    console::style(lsp_status).green()
+                );
+                println!(
+                    "{} {} {} {}   📋 GSD Checklist: {}",
+                    pad_to_width(&col1_l2, w1),
+                    console::style("│").dim(),
+                    pad_to_width(&col2_l2, w2),
+                    console::style("│").dim(),
+                    if checklist_status == "none" {
+                        console::style("none").dim().to_string()
+                    } else {
+                        console::style(&checklist_status).yellow().to_string()
+                    }
+                );
+                println!();
+            }
+
             let cli = CLI_CHANNEL_FN.get().expect(
                 "CLI channel factory not registered — call register_cli_channel_fn at startup",
             )();
@@ -3677,63 +3882,293 @@ pub async fn run(
                 vec![ChatMessage::system(&system_prompt)]
             };
 
-            loop {
-                print!("> ");
-                let _ = std::io::stdout().flush();
+            let run_fallback = true;
 
-                // Read raw bytes to avoid UTF-8 validation errors when PTY
-                // transport splits multi-byte characters at frame boundaries
-                // (e.g. CJK input with spaces over kubectl exec / SSH).
-                let mut raw = Vec::new();
-                match std::io::BufRead::read_until(&mut std::io::stdin().lock(), b'\n', &mut raw) {
-                    Ok(0) => break,
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("\nError reading input: {e}\n");
+            if run_fallback {
+                let provider_runtime_options =
+                    zeroclaw_providers::provider_runtime_options_from_config(&config);
+                let mut model_provider =
+                    zeroclaw_providers::create_routed_model_provider_with_options(
+                        &config,
+                        &provider_name,
+                        agent_model_provider.and_then(|e| e.api_key.as_deref()),
+                        agent_model_provider.and_then(|e| e.uri.as_deref()),
+                        &config.reliability,
+                        &config.model_routes,
+                        &model_name,
+                        &provider_runtime_options,
+                    )?;
+                let (
+                    mut tools_registry,
+                    _,
+                    _,
+                    _,
+                    _,
+                    _,
+                ) = tools::all_tools_with_runtime(
+                    Arc::new(config.clone()),
+                    &security,
+                    &risk_profile,
+                    agent_alias,
+                    runtime.clone(),
+                    mem.clone(),
+                    composio_key,
+                    composio_entity_id,
+                    &config.browser,
+                    &config.http_request,
+                    &config.web_fetch,
+                    &config.data_dir,
+                    &config.agents,
+                    agent_model_provider.and_then(|e| e.api_key.as_deref()),
+                    &config,
+                    None,
+                    is_subagent_caller,
+                );
+
+                let peripheral_tools: Vec<Box<dyn Tool>> = if let Some(f) = PERIPHERAL_TOOLS_FN.get() {
+                    f(config.peripherals.clone()).await.unwrap_or_default()
+                } else {
+                    vec![]
+                };
+                if !peripheral_tools.is_empty() {
+                    tools_registry.extend(peripheral_tools);
+                }
+
+                apply_policy_tool_filter(
+                    &mut tools_registry,
+                    Some(security.as_ref()),
+                    allowed_tools.as_deref(),
+                );
+
+                tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
+
+                loop {
+                    let is_tui_active = TUI_SENDER.try_with(|sender| sender.is_some()).unwrap_or(false);
+                    let input = if is_tui_active {
+                        let mut input_buf = String::new();
+                        let mut is_eof = false;
+                        let commands = vec![
+                            "/help", "/clear", "/new", "/model", "/models", "/skills",
+                            "/mcp", "/status", "/configure", "/logs", "/quit", "/exit"
+                        ];
+                        let mut h;
+
+                        if crossterm::terminal::enable_raw_mode().is_ok() {
+                            loop {
+                                let (_, current_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                h = current_h;
+
+                                // 1. Draw suggestions at H if starting with '/'
+                                if input_buf.starts_with('/') {
+                                    let matching: Vec<&str> = commands.iter()
+                                        .filter(|cmd| cmd.starts_with(&input_buf))
+                                        .cloned()
+                                        .collect();
+                                    
+                                    if !matching.is_empty() {
+                                        let suggestion_line = format!(
+                                            "  {} {}",
+                                            console::style("Suggestions:").yellow().bold(),
+                                            matching.iter().map(|cmd| console::style(*cmd).cyan().to_string()).collect::<Vec<String>>().join(", ")
+                                        );
+                                        print!("\x1B[s\x1B[{};1H\x1B[K{}\x1B[u", h, suggestion_line);
+                                    } else {
+                                        print!("\x1B[s\x1B[{};1H\x1B[K\x1B[u", h);
+                                    }
+                                } else {
+                                    // Clear suggestions from H if input no longer starts with '/'
+                                    print!("\x1B[s\x1B[{};1H\x1B[K\x1B[u", h);
+                                }
+                                let _ = std::io::stdout().flush();
+
+                                // 2. Draw current input at H-1
+                                print!("\x1B[{};1H\x1B[K> {}", h.saturating_sub(1), input_buf);
+                                let _ = std::io::stdout().flush();
+
+                                // 3. Read key event
+                                match crossterm::event::read() {
+                                    Ok(crossterm::event::Event::Key(key_event)) => {
+                                        if key_event.kind == crossterm::event::KeyEventKind::Press {
+                                            match key_event.code {
+                                                crossterm::event::KeyCode::Enter => {
+                                                    let _ = crossterm::terminal::disable_raw_mode();
+                                                    println!();
+                                                    break;
+                                                }
+                                                crossterm::event::KeyCode::Tab => {
+                                                    if input_buf.starts_with('/') {
+                                                        let matching: Vec<&str> = commands.iter()
+                                                            .filter(|cmd| cmd.starts_with(&input_buf))
+                                                            .cloned()
+                                                            .collect();
+                                                        if matching.len() == 1 {
+                                                            input_buf = matching[0].to_string();
+                                                        }
+                                                    }
+                                                }
+                                                crossterm::event::KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                                    let _ = crossterm::terminal::disable_raw_mode();
+                                                    std::process::exit(130);
+                                                }
+                                                crossterm::event::KeyCode::Char('d') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                                    if input_buf.is_empty() {
+                                                        let _ = crossterm::terminal::disable_raw_mode();
+                                                        is_eof = true;
+                                                        break;
+                                                    }
+                                                }
+                                                crossterm::event::KeyCode::Char(c) => {
+                                                    input_buf.push(c);
+                                                }
+                                                crossterm::event::KeyCode::Backspace => {
+                                                    input_buf.pop();
+                                                }
+                                                crossterm::event::KeyCode::Esc => {
+                                                    input_buf.clear();
+                                                    print!("\x1B[s\x1B[{};1H\x1B[K\x1B[u", h);
+                                                    let _ = std::io::stdout().flush();
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if is_eof {
+                                String::new()
+                            } else {
+                                format!("{}\n", input_buf)
+                            }
+                        } else {
+                            // Fallback if raw mode fails
+                            let mut raw = Vec::new();
+                            if std::io::BufRead::read_until(&mut std::io::stdin().lock(), b'\n', &mut raw).is_ok() {
+                                String::from_utf8_lossy(&raw).into_owned()
+                            } else {
+                                String::new()
+                            }
+                        }
+                    } else {
+                        // Fallback in non-TTY mode
+                        let mut raw = Vec::new();
+                        if std::io::BufRead::read_until(&mut std::io::stdin().lock(), b'\n', &mut raw).is_ok() {
+                            String::from_utf8_lossy(&raw).into_owned()
+                        } else {
+                            String::new()
+                        }
+                    };
+
+                    if input.is_empty() {
                         break;
                     }
-                }
-                let input = String::from_utf8_lossy(&raw).into_owned();
 
-                let user_input = input.trim().to_string();
+                    let user_input = input.trim().to_string();
+
+                if is_tui_active {
+                    let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                    // 1. Clear H-1 (input line) and H (suggestions line)
+                    print!("\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(1), h);
+                    let _ = std::io::stdout().flush();
+                }
+
                 if user_input.is_empty() {
                     continue;
                 }
-                match user_input.as_str() {
-                    "/quit" | "/exit" => break,
-                    "/help" => {
-                        println!("Available commands:");
-                        println!("  /help             Show this help message");
-                        println!("  /clear /new       Clear conversation history");
-                        println!("  /quit /exit       Exit interactive mode");
+
+                if is_tui_active {
+                    let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                    // 2. Echo the user input at H-3 (inside scroll region) and scroll
+                    print!("\x1B[{};1H> {}\n", h.saturating_sub(3), user_input);
+                    // 3. Move cursor back to H-3 so agent prints start there
+                    print!("\x1B[{};1H", h.saturating_sub(3));
+                    let _ = std::io::stdout().flush();
+                }
+
+                if user_input.starts_with('/') {
+                    let parts: Vec<&str> = user_input.split_whitespace().collect();
+                    let command = parts[0];
+                    if command == "/quit" || command == "/exit" {
+                        break;
+                    } else if command == "/help" {
+                        println!("{}", console::style("Available commands:").yellow().bold());
+                        println!("  {}             Show this help message", console::style("/help").cyan());
+                        println!("  {}       Clear conversation history", console::style("/clear /new").cyan());
+                        println!("  {}      Switch model interactively or via <p>/<m>", console::style("/model /models").cyan());
+                        println!("  {}           List currently installed skills and details", console::style("/skills").cyan());
+                        println!("  {}             List configured MCP servers and details", console::style("/mcp").cyan());
+                        println!("  {}            Show current session status details", console::style("/status").cyan());
+                        println!("  {}        Run the configuration wizard inline", console::style("/configure").cyan());
+                        println!("  {}             Show the last 20 log events", console::style("/logs").cyan());
+                        println!("  {}       Exit interactive mode", console::style("/quit /exit").cyan());
                         println!(
-                            "  /think:<level>    Set reasoning depth (off|minimal|low|medium|high|max)\n"
+                            "  {}    Set reasoning depth (off|minimal|low|medium|high|max)\n",
+                            console::style("/think:<level>").cyan()
                         );
                         continue;
-                    }
-                    "/clear" | "/new" => {
-                        println!(
-                            "This will clear the current conversation and delete all session memory."
-                        );
-                        println!("Core memories (long-term facts/preferences) will be preserved.");
-                        print!("Continue? [y/N] ");
-                        let _ = std::io::stdout().flush();
+                    } else if command == "/clear" || command == "/new" {
+                        let confirm = if is_tui_active {
+                            let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                            crate::agent::tui_events::TUI_SUSPENDED.store(true, std::sync::atomic::Ordering::SeqCst);
+                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
+                            // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
+                            print!("\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(2), h.saturating_sub(1), h);
+                            let _ = std::io::stdout().flush();
 
-                        let mut confirm_raw = Vec::new();
-                        if std::io::BufRead::read_until(
-                            &mut std::io::stdin().lock(),
-                            b'\n',
-                            &mut confirm_raw,
-                        )
-                        .is_err()
-                        {
-                            continue;
-                        }
-                        let confirm = String::from_utf8_lossy(&confirm_raw);
+                            println!(
+                                "This will clear the current conversation and delete all session memory."
+                            );
+                            println!("Core memories (long-term facts/preferences) will be preserved.");
+                            print!("Continue? [y/N] ");
+                            let _ = std::io::stdout().flush();
+
+                            let mut confirm_raw = Vec::new();
+                            let read_res = std::io::BufRead::read_until(
+                                &mut std::io::stdin().lock(),
+                                b'\n',
+                                &mut confirm_raw,
+                            );
+
+                            let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                            // Restore terminal scroll region to 1..=H-3 and cursor position
+                            print!("\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H", new_h.saturating_sub(3), new_h.saturating_sub(3));
+                            let _ = std::io::stdout().flush();
+                            crate::agent::tui_events::TUI_SUSPENDED.store(false, std::sync::atomic::Ordering::SeqCst);
+                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
+
+                            if read_res.is_ok() {
+                                String::from_utf8_lossy(&confirm_raw).into_owned()
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            println!(
+                                "This will clear the current conversation and delete all session memory."
+                            );
+                            println!("Core memories (long-term facts/preferences) will be preserved.");
+                            print!("Continue? [y/N] ");
+                            let _ = std::io::stdout().flush();
+
+                            let mut confirm_raw = Vec::new();
+                            if std::io::BufRead::read_until(
+                                &mut std::io::stdin().lock(),
+                                b'\n',
+                                &mut confirm_raw,
+                            )
+                            .is_ok() {
+                                String::from_utf8_lossy(&confirm_raw).into_owned()
+                            } else {
+                                String::new()
+                            }
+                        };
+
                         if !matches!(confirm.trim().to_lowercase().as_str(), "y" | "yes") {
                             println!("Cancelled.\n");
                             continue;
                         }
+
+                        print!("\x1B[2J\x1B[1;1H");
+                        let _ = std::io::stdout().flush();
 
                         history.clear();
                         history.push(ChatMessage::system(&system_prompt));
@@ -3756,8 +4191,264 @@ pub async fn run(
                             save_interactive_session_history(path, &history)?;
                         }
                         continue;
+                    } else if command == "/model" || command == "/models" {
+                        if parts.len() >= 2 {
+                            let target = parts[1];
+                            if let Some((p, m)) = target.split_once('/') {
+                                let new_provider_name = p.trim().to_string();
+                                let new_model_name = m.trim().to_string();
+                                let new_agent_model_provider = config
+                                    .providers
+                                    .models
+                                    .find(&new_provider_name, "default");
+                                
+                                match zeroclaw_providers::create_routed_model_provider_with_options(
+                                    &config,
+                                    &new_provider_name,
+                                    new_agent_model_provider.and_then(|e| e.api_key.as_deref()),
+                                    new_agent_model_provider.and_then(|e| e.uri.as_deref()),
+                                    &config.reliability,
+                                    &config.model_routes,
+                                    &new_model_name,
+                                    &provider_runtime_options,
+                                ) {
+                                    Ok(new_mp) => {
+                                        model_provider = new_mp;
+                                        provider_name = new_provider_name;
+                                        model_name = new_model_name;
+                                        println!(
+                                            "{}",
+                                            console::style(format!(
+                                                "✓ Switched active model to: {}/{}",
+                                                provider_name, model_name
+                                            ))
+                                            .green()
+                                            .bold()
+                                        );
+                                        
+                                        observer.record_event(&ObserverEvent::AgentStart {
+                                            model_provider: provider_name.to_string(),
+                                            model: model_name.to_string(),
+                                        });
+                                    }
+                                    Err(err) => {
+                                        println!(
+                                            "{}",
+                                            console::style(format!(
+                                                "✗ Failed to switch model: {}",
+                                                err
+                                            ))
+                                            .red()
+                                            .bold()
+                                        );
+                                    }
+                                }
+                            } else {
+                                println!(
+                                    "{}",
+                                    console::style("Usage: /model <provider>/<model> (e.g., /model openai/gpt-4o)")
+                                        .yellow()
+                                        .bold()
+                                );
+                            }
+                            continue;
+                        }
+
+                        // Interactive Selection
+                        let mut models_list = Vec::new();
+                        for (p_type, p_alias, profile) in config.providers.models.iter_entries() {
+                            let model_id = match &profile.model {
+                                Some(m) if !m.is_empty() => m.clone(),
+                                _ => "default".to_string(),
+                            };
+                            models_list.push((p_type.to_string(), p_alias.to_string(), model_id));
+                        }
+
+                        if models_list.is_empty() {
+                            println!("{}", console::style("No models or providers configured in config.toml.").yellow().bold());
+                            println!("Run {} to configure one.", console::style("/configure").cyan().bold());
+                            continue;
+                        }
+
+                        let mut items = Vec::new();
+                        for (p_type, p_alias, model_id) in &models_list {
+                            items.push(format!("{p_type}.{p_alias} ({model_id})"));
+                        }
+                        items.push("Cancel".to_string());
+
+                        use dialoguer::Select;
+                        let selection = if is_tui_active {
+                            let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                            crate::agent::tui_events::TUI_SUSPENDED.store(true, std::sync::atomic::Ordering::SeqCst);
+                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
+                            // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
+                            print!("\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(2), h.saturating_sub(1), h);
+                            let _ = std::io::stdout().flush();
+
+                            let sel = Select::new()
+                                .with_prompt("Select active model")
+                                .items(&items)
+                                .default(0)
+                                .interact();
+
+                            let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                            // Restore terminal scroll region to 1..=H-3 and cursor position
+                            print!("\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H", new_h.saturating_sub(3), new_h.saturating_sub(3));
+                            let _ = std::io::stdout().flush();
+                            crate::agent::tui_events::TUI_SUSPENDED.store(false, std::sync::atomic::Ordering::SeqCst);
+                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
+
+                            sel
+                        } else {
+                            Select::new()
+                                .with_prompt("Select active model")
+                                .items(&items)
+                                .default(0)
+                                .interact()
+                        };
+
+                        match selection {
+                            Ok(idx) if idx < models_list.len() => {
+                                let (new_provider_name, new_alias, new_model_name) = &models_list[idx];
+                                let new_agent_model_provider = config
+                                    .providers
+                                    .models
+                                    .find(new_provider_name, new_alias);
+                                
+                                match zeroclaw_providers::create_routed_model_provider_with_options(
+                                    &config,
+                                    new_provider_name,
+                                    new_agent_model_provider.and_then(|e| e.api_key.as_deref()),
+                                    new_agent_model_provider.and_then(|e| e.uri.as_deref()),
+                                    &config.reliability,
+                                    &config.model_routes,
+                                    new_model_name,
+                                    &provider_runtime_options,
+                                ) {
+                                    Ok(new_mp) => {
+                                        model_provider = new_mp;
+                                        provider_name = new_provider_name.to_string();
+                                        model_name = new_model_name.to_string();
+                                        println!(
+                                            "{}",
+                                            console::style(format!(
+                                                "✓ Switched active model to: {} ({})",
+                                                provider_name, model_name
+                                            ))
+                                            .green()
+                                            .bold()
+                                        );
+                                        
+                                        observer.record_event(&ObserverEvent::AgentStart {
+                                            model_provider: provider_name.to_string(),
+                                            model: model_name.to_string(),
+                                        });
+                                    }
+                                    Err(err) => {
+                                        println!(
+                                            "{}",
+                                            console::style(format!(
+                                                "✗ Failed to switch model: {}",
+                                                err
+                                            ))
+                                            .red()
+                                            .bold()
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {
+                                println!("Cancelled.");
+                            }
+                        }
+                        continue;
+                    } else if command == "/skills" {
+                        let loaded_skills = crate::skills::load_skills_with_config(&config.data_dir, &config);
+                        if loaded_skills.is_empty() {
+                            println!("{}", console::style("No skills installed.").dim());
+                        } else {
+                            println!("{}", console::style("Installed Skills:").cyan().bold());
+                            for skill in &loaded_skills {
+                                println!(
+                                    "  {} {} (v{})",
+                                    console::style("✦").cyan().bold(),
+                                    console::style(&skill.name).bold(),
+                                    console::style(&skill.version).dim()
+                                );
+                                println!("    {}", console::style(&skill.description).dim());
+                                if !skill.tools.is_empty() {
+                                    print!("    Tools: ");
+                                    let tool_names: Vec<String> = skill.tools.iter().map(|t| t.name.clone()).collect();
+                                    println!("{}", tool_names.join(", "));
+                                }
+                                println!();
+                            }
+                        }
+                        continue;
+                    } else if command == "/mcp" {
+                        if !config.mcp.enabled {
+                            println!("{}", console::style("MCP is currently disabled in your config.toml.").yellow().bold());
+                            continue;
+                        }
+                        if config.mcp.servers.is_empty() {
+                            println!("{}", console::style("No MCP servers configured.").dim());
+                            continue;
+                        }
+                        println!("{}", console::style("Configured MCP Servers:").cyan().bold());
+                        for server in &config.mcp.servers {
+                            println!(
+                                "  ✦ {} (Command: {})",
+                                console::style(&server.name).bold(),
+                                console::style(format!("{:?}", server)).dim()
+                            );
+                        }
+                        continue;
+                    } else if command == "/configure" {
+                        let mut config_mut = config.clone();
+                        let wizard_res = if is_tui_active {
+                            let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                            crate::agent::tui_events::TUI_SUSPENDED.store(true, std::sync::atomic::Ordering::SeqCst);
+                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
+                            // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
+                            print!("\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(2), h.saturating_sub(1), h);
+                            let _ = std::io::stdout().flush();
+
+                            let res = run_configure_wizard_inline(&mut config_mut).await;
+
+                            let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                            // Restore terminal scroll region to 1..=H-3 and cursor position
+                            print!("\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H", new_h.saturating_sub(3), new_h.saturating_sub(3));
+                            let _ = std::io::stdout().flush();
+                            crate::agent::tui_events::TUI_SUSPENDED.store(false, std::sync::atomic::Ordering::SeqCst);
+                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
+
+                            res
+                        } else {
+                            run_configure_wizard_inline(&mut config_mut).await
+                        };
+
+                        match wizard_res {
+                            Ok(()) => {
+                                config = config_mut;
+                            }
+                            Err(e) => {
+                                println!("Configuration failed: {e}");
+                            }
+                        }
+                        continue;
+                    } else if command == "/logs" {
+                        if let Err(e) = print_last_logs(&config) {
+                            println!("Failed to print logs: {e}");
+                        }
+                        continue;
+                    } else if command == "/status" {
+                        println!("{}", console::style("Active Session Status:").cyan().bold());
+                        println!("  {} Provider: {}", console::style("✦").cyan(), console::style(&provider_name).bold());
+                        println!("  {} Model: {}", console::style("✦").cyan(), console::style(&model_name).bold());
+                        println!("  {} Temperature: {}", console::style("✦").cyan(), console::style(format!("{:?}", temperature)).bold());
+                        println!("  {} Session Memory Key: {}", console::style("✦").cyan(), console::style(memory_session_id.as_deref().unwrap_or("none")).dim());
+                        continue;
                     }
-                    _ => {}
                 }
 
                 // ── Parse thinking directive from interactive input ───
@@ -3884,36 +4575,114 @@ pub async fn run(
                 let content_was_streamed =
                     std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let content_streamed_flag = content_was_streamed.clone();
-                let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+
 
                 let consumer_handle = tokio::spawn(async move {
                     use std::io::Write;
+                    let mut in_think = false;
+                    let mut pending_buffer = String::new();
+                    let mut has_printed_anything = false;
+
                     while let Some(event) = delta_rx.recv().await {
                         match event {
                             StreamDelta::Status(text) => {
-                                if is_tty {
-                                    let _ = write!(std::io::stderr(), "\x1b[2m{text}\x1b[0m");
-                                } else {
-                                    let _ = write!(std::io::stderr(), "{text}");
-                                }
+                                let premium_text = format_premium_status(&text);
+                                let _ = write!(std::io::stderr(), "{premium_text}");
                                 let _ = std::io::stderr().flush();
                             }
                             StreamDelta::Text(text) => {
                                 content_streamed_flag
                                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                                print!("{text}");
-                                let _ = std::io::stdout().flush();
+                                pending_buffer.push_str(&text);
+
+                                loop {
+                                    if in_think {
+                                        if let Some(pos) = pending_buffer.find("</think>") {
+                                            pending_buffer.drain(..pos + 8);
+                                            in_think = false;
+                                        } else {
+                                            if pending_buffer.len() > 8 {
+                                                let keep_start = pending_buffer.len() - 8;
+                                                pending_buffer.drain(..keep_start);
+                                            }
+                                            break;
+                                        }
+                                    } else {
+                                        if let Some(pos) = pending_buffer.find("<think>") {
+                                            let mut prefix: String = pending_buffer.drain(..pos).collect();
+                                            if !has_printed_anything {
+                                                let trimmed = prefix.trim_start();
+                                                if !trimmed.is_empty() {
+                                                    prefix = trimmed.to_string();
+                                                    has_printed_anything = true;
+                                                }
+                                            }
+                                            if !prefix.is_empty() {
+                                                print!("{prefix}");
+                                                let _ = std::io::stdout().flush();
+                                            }
+                                            pending_buffer.drain(..7);
+                                            in_think = true;
+                                        } else {
+                                            if pending_buffer.len() > 7 {
+                                                let print_len = pending_buffer.len() - 7;
+                                                let mut prefix: String = pending_buffer.drain(..print_len).collect();
+                                                if !has_printed_anything {
+                                                    let trimmed = prefix.trim_start();
+                                                    if !trimmed.is_empty() {
+                                                        prefix = trimmed.to_string();
+                                                        has_printed_anything = true;
+                                                    }
+                                                }
+                                                if !prefix.is_empty() {
+                                                    print!("{prefix}");
+                                                    let _ = std::io::stdout().flush();
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
                             }
+                        }
+                    }
+                    if !in_think && !pending_buffer.is_empty() {
+                        let mut final_text = pending_buffer;
+                        if !has_printed_anything {
+                            final_text = final_text.trim_start().to_string();
+                        }
+                        if !final_text.is_empty() {
+                            print!("{final_text}");
+                            let _ = std::io::stdout().flush();
                         }
                     }
                 });
 
-                // Ctrl+C cancels the in-flight turn instead of killing the process.
+                // Spawn a key listener task to detect Ctrl+C and Esc keypresses while the model runs.
                 let cancel_token = CancellationToken::new();
                 let cancel_token_clone = cancel_token.clone();
-                let ctrlc_handle = tokio::spawn(async move {
-                    if tokio::signal::ctrl_c().await.is_ok() {
-                        cancel_token_clone.cancel();
+                let key_listener_handle = tokio::spawn(async move {
+                    if let Ok(()) = crossterm::terminal::enable_raw_mode() {
+                        loop {
+                            if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(50)) {
+                                if let Ok(crossterm::event::Event::Key(key_event)) = crossterm::event::read() {
+                                    if key_event.code == crossterm::event::KeyCode::Esc {
+                                        cancel_token_clone.cancel();
+                                        break;
+                                    }
+                                    if key_event.code == crossterm::event::KeyCode::Char('c')
+                                        && key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                                    {
+                                        let _ = crossterm::terminal::disable_raw_mode();
+                                        std::process::exit(130);
+                                    }
+                                }
+                            }
+                            if cancel_token_clone.is_cancelled() {
+                                break;
+                            }
+                        }
+                        let _ = crossterm::terminal::disable_raw_mode();
                     }
                 });
 
@@ -3930,7 +4699,7 @@ pub async fn run(
                                 &model_name,
                                 turn_temperature,
                                 true,
-                                approval_manager.as_ref(),
+                                approval_manager.as_deref(),
                                 channel_name,
                                 None,
                                 &config.multimodal,
@@ -4061,8 +4830,9 @@ pub async fn run(
                     }
                 };
 
-                // Clean up: stop the Ctrl+C listener and flush streaming events.
-                ctrlc_handle.abort();
+                // Clean up: stop the key listener and flush streaming events.
+                key_listener_handle.abort();
+                let _ = crossterm::terminal::disable_raw_mode();
                 drop(delta_tx);
                 let _ = consumer_handle.await;
 
@@ -4078,6 +4848,118 @@ pub async fn run(
                     eprintln!("\nError sending CLI response: {e}\n");
                 }
                 observer.record_event(&ObserverEvent::TurnComplete);
+
+                // Skill self-improvement
+                if config.skills.skill_improvement.enabled {
+                    let tool_calls = crate::skills::creator::extract_tool_calls_from_history(&history);
+                    let mut used_skills = Vec::new();
+                    for call in &tool_calls {
+                        for skill in &skills {
+                            if skill.tools.iter().any(|t| t.name == call.name) {
+                                if !used_skills.contains(&skill.name) {
+                                    used_skills.push(skill.name.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    if !used_skills.is_empty() {
+                        let mut improver = crate::skills::improver::SkillImprover::new(
+                            config.data_dir.clone(),
+                            config.skills.skill_improvement.clone(),
+                        );
+
+                        for slug in used_skills {
+                            if improver.should_improve_skill(&slug) {
+                                println!(
+                                    "  {} Analyzing skill '{}' for self-improvement...",
+                                    console::style("⚙").cyan().bold(),
+                                    slug
+                                );
+                                let skill_dir = config.data_dir.join("skills").join(&slug);
+                                let toml_path = skill_dir.join("SKILL.toml");
+                                if toml_path.exists() {
+                                    if let Ok(current_content) = std::fs::read_to_string(&toml_path) {
+                                        let system_msg = r#"You are an AI that optimizes Skill configuration files (SKILL.toml).
+Analyze the provided conversation history where the agent executed tools from the skill.
+Identify any deficiencies in the tool definitions, descriptions, or parameters, or potential enhancements to the skill's metadata.
+Provide the updated, complete SKILL.toml content.
+Your response MUST contain the complete, valid updated SKILL.toml file inside a single ```toml code block.
+After the code block, write a brief explanation (one line) of the improvement starting with "REASON: "."#;
+
+                                        let mut history_text = String::new();
+                                        for msg in &history {
+                                            let _ = writeln!(history_text, "{}: {}", msg.role, msg.content);
+                                        }
+
+                                        let user_msg = format!(
+                                            "Current SKILL.toml:\n```toml\n{}\n```\n\nExecution history:\n{}",
+                                            current_content,
+                                            history_text
+                                        );
+
+                                        match model_provider.chat_with_system(
+                                            Some(system_msg),
+                                            &user_msg,
+                                            &model_name,
+                                            temperature,
+                                        ).await {
+                                            Ok(llm_res) => {
+                                                let mut improved_content = String::new();
+                                                if let Some(start) = llm_res.find("```toml") {
+                                                    let rest = &llm_res[start + 7..];
+                                                    if let Some(end) = rest.find("```") {
+                                                        improved_content = rest[..end].trim().to_string();
+                                                    }
+                                                } else if let Some(start) = llm_res.find("```") {
+                                                    let rest = &llm_res[start + 3..];
+                                                    if let Some(end) = rest.find("```") {
+                                                        improved_content = rest[..end].trim().to_string();
+                                                    }
+                                                }
+
+                                                let reason = llm_res.lines()
+                                                    .find(|l| l.trim().starts_with("REASON:"))
+                                                    .map(|l| l.trim().strip_prefix("REASON:").unwrap_or(l).trim().to_string())
+                                                    .unwrap_or_else(|| "Self-improved via agent feedback".to_string());
+
+                                                if !improved_content.is_empty() {
+                                                    match improver.improve_skill(&slug, &improved_content, &reason).await {
+                                                        Ok(Some(_)) => {
+                                                            println!(
+                                                                "  {} Improved skill '{}' successfully! Reason: {}",
+                                                                console::style("✦").green().bold(),
+                                                                slug,
+                                                                console::style(&reason).dim()
+                                                            );
+                                                        }
+                                                        Ok(None) => {}
+                                                        Err(e) => {
+                                                            ::zeroclaw_log::record!(
+                                                                WARN,
+                                                                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                                                                    .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
+                                                                "Skill improvement validation failed"
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                ::zeroclaw_log::record!(
+                                                    WARN,
+                                                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                                                        .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
+                                                    "Failed to query model for skill improvement"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Context compression before hard trimming to preserve long-context signal.
                 {
@@ -4130,6 +5012,7 @@ pub async fn run(
                     save_interactive_session_history(path, &history)?;
                 }
             }
+            }
         }
 
         let duration = start.elapsed();
@@ -4143,10 +5026,13 @@ pub async fn run(
 
         Ok(final_output)
     };
-    __zc_body
-        .instrument(__zc_scope_span)
-        .instrument(__zc_attribution_span)
-        .await
+    let sender = overrides.tui_sender.clone();
+    TUI_SENDER.scope(sender, async move {
+        __zc_body
+            .instrument(__zc_scope_span)
+            .instrument(__zc_attribution_span)
+            .await
+    }).await
 }
 
 /// Process a single message through the full agent (with tools, peripherals, memory).
@@ -4652,6 +5538,182 @@ pub async fn process_message(
         .instrument(__zc_scope_span)
         .instrument(__zc_attribution_span)
         .await
+}
+
+fn format_premium_status(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.starts_with('\u{1f4ac}') { // 💬
+        let content = trimmed.strip_prefix('\u{1f4ac}').unwrap_or(trimmed).trim();
+        format!("  {} {}\n", console::style("✦").cyan().bold(), console::style(content).cyan())
+    } else if trimmed.starts_with('\u{23f3}') { // ⏳
+        let content = trimmed.strip_prefix('\u{23f3}').unwrap_or(trimmed).trim();
+        format!("  {} Running {}...\n", console::style("⚙").yellow().bold(), console::style(content).yellow())
+    } else if trimmed.starts_with('\u{2705}') { // ✅
+        let content = trimmed.strip_prefix('\u{2705}').unwrap_or(trimmed).trim();
+        format!("  {} Completed {}\n", console::style("✦").green().bold(), console::style(content).green())
+    } else if trimmed.starts_with('\u{274c}') { // ❌
+        let content = trimmed.strip_prefix('\u{274c}').unwrap_or(trimmed).trim();
+        format!("  {} {}\n", console::style("✗").red().bold(), console::style(content).red())
+    } else {
+        format!("  {} {}\n", console::style("⚙").dim(), console::style(trimmed).dim())
+    }
+}
+
+async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
+    use dialoguer::{Password, Select, Input};
+
+    println!("{}", console::style("=== openz Configuration Setup ===").cyan().bold());
+    println!("This will set up your model provider and default agent.");
+    println!();
+
+    let providers = vec![
+        "anthropic",
+        "openai",
+        "gemini",
+        "groq",
+        "deepseek",
+        "ollama",
+        "openrouter",
+        "lmstudio",
+        "Other"
+    ];
+
+    let selection = Select::new()
+        .with_prompt("Select AI Model Provider")
+        .items(&providers)
+        .default(0)
+        .interact()?;
+
+    let picked = if selection == providers.len() - 1 {
+        let custom: String = Input::new()
+            .with_prompt("Enter Custom Provider Name")
+            .interact_text()?;
+        custom.trim().to_lowercase()
+    } else {
+        providers[selection].to_string()
+    };
+
+    let needs_key = !matches!(picked.as_str(), "ollama" | "lmstudio");
+
+    let api_key = if needs_key {
+        let key: String = Password::new()
+            .with_prompt("Enter API Key")
+            .interact()?;
+        key.trim().to_string()
+    } else {
+        String::new()
+    };
+
+    let default_model = match picked.as_str() {
+        "anthropic" => "claude-3-5-sonnet-20241022",
+        "openai" => "gpt-4o",
+        "gemini" => "gemini-1.5-pro",
+        "groq" => "llama3-70b-8192",
+        "deepseek" => "deepseek-chat",
+        "ollama" => "llama3",
+        "lmstudio" => "model-id",
+        _ => "model-id"
+    };
+
+    let model: String = Input::new()
+        .with_prompt("Enter Model ID")
+        .default(default_model.to_string())
+        .interact_text()?;
+    let model = model.trim().to_string();
+
+    let alias = "default";
+    config.providers.models.ensure(&picked, alias);
+
+    let prefix = format!("providers.models.{picked}.{alias}");
+    if !api_key.is_empty() {
+        config.set_secret_persistent(&format!("{prefix}.api_key"), api_key)?;
+    }
+    config.set_prop_persistent(&format!("{prefix}.model"), &model)?;
+
+    if config.risk_profiles.get("default").is_none() {
+        let mut default_profile = zeroclaw_config::schema::RiskProfileConfig::default();
+        default_profile.ensure_default_auto_approve();
+        config.risk_profiles.insert("default".to_string(), default_profile);
+        config.mark_dirty("risk_profiles.default");
+    }
+
+    if config.runtime_profiles.get("default").is_none() {
+        config.runtime_profiles.insert("default".to_string(), zeroclaw_config::schema::RuntimeProfileConfig::default());
+        config.mark_dirty("runtime_profiles.default");
+    }
+
+    let agent_prefix = "agents.assistant";
+    config.set_prop_persistent(&format!("{agent_prefix}.model_provider"), &format!("{picked}.{alias}"))?;
+    config.set_prop_persistent(&format!("{agent_prefix}.risk_profile"), "default")?;
+    config.set_prop_persistent(&format!("{agent_prefix}.runtime_profile"), "default")?;
+
+    config.save_dirty().await?;
+    println!();
+    println!("{}", console::style("✓ Configuration saved successfully!").green().bold());
+    println!("Config file: {}", config.config_path.display());
+    println!();
+
+    Ok(())
+}
+
+fn print_last_logs(config: &Config) -> Result<()> {
+    let log_path = config.config_path.parent()
+        .context("Failed to get config path parent")?
+        .join("state/runtime-trace.jsonl");
+
+    if !log_path.exists() {
+        println!("No logs found at {}", log_path.display());
+        return Ok(());
+    }
+
+    let file = std::fs::File::open(&log_path)?;
+    let reader = std::io::BufReader::new(file);
+    let mut lines = Vec::new();
+
+    for line in std::io::BufRead::lines(reader) {
+        let line = line?;
+        if !line.trim().is_empty() {
+            lines.push(line);
+        }
+    }
+
+    // Get last 20 lines
+    let start_idx = lines.len().saturating_sub(20);
+    for line in &lines[start_idx..] {
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+            let timestamp = event["@timestamp"].as_str().unwrap_or("");
+            let severity = event["severity_text"].as_str().unwrap_or("INFO");
+            let category = event["event"]["category"].as_str().unwrap_or("");
+            let action = event["event"]["action"].as_str().unwrap_or("");
+            let message = event["message"].as_str().unwrap_or("");
+
+            let severity_styled = match severity {
+                "ERROR" => console::style(severity).red().bold(),
+                "WARN" => console::style(severity).yellow().bold(),
+                "INFO" => console::style(severity).green(),
+                _ => console::style(severity).dim(),
+            };
+
+            let ts_display = if timestamp.len() >= 19 {
+                format!("{} {}", &timestamp[0..10], &timestamp[11..19])
+            } else {
+                timestamp.to_string()
+            };
+
+            println!(
+                "[{}] {} [{}:{}] {}",
+                console::style(ts_display).dim(),
+                severity_styled,
+                console::style(category).cyan(),
+                console::style(action).blue(),
+                message
+            );
+        } else {
+            println!("{}", line);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
