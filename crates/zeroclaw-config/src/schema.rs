@@ -3982,7 +3982,11 @@ impl Default for McpConfig {
             name: "duckdb".to_string(),
             transport: McpTransport::Stdio,
             command: "uvx".to_string(),
-            args: vec!["duckdb-mcp-server".to_string()],
+            args: vec![
+                "duckdb-mcp-server".to_string(),
+                "--db-path".to_string(),
+                ":memory:".to_string(),
+            ],
             enabled: true,
             ..Default::default()
         });
