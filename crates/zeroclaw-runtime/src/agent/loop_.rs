@@ -1919,7 +1919,9 @@ pub async fn run_tool_call_loop(
                     completion_tokens: None,
                     cost_usd: None,
                 });
-                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Error(safe_error.clone()));
+                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Error(
+                    safe_error.clone(),
+                ));
 
                 observer.record_event(&ObserverEvent::LlmResponse {
                     model_provider: provider_name.to_string(),
@@ -3735,27 +3737,72 @@ pub async fn run(
             println!("{response}");
             observer.record_event(&ObserverEvent::TurnComplete);
         } else {
-            println!("{}", console::style("  ___  ____  _____ _   _ _____").cyan().bold());
-            println!("{}", console::style(" / _ \\|  _ \\| ____| \\ | |__  /").cyan().bold());
-            println!("{}", console::style("| | | | |_) |  _| |  \\| | / / ").cyan().bold());
-            println!("{}", console::style("| |_| |  __/| |___| |\\  |/ /_ ").cyan().bold());
-            println!("{}", console::style(" \\___/|_|   |_____|_| \\_/____|").cyan().bold());
+            println!(
+                "{}",
+                console::style("  ___  ____  _____ _   _ _____")
+                    .cyan()
+                    .bold()
+            );
+            println!(
+                "{}",
+                console::style(" / _ \\|  _ \\| ____| \\ | |__  /")
+                    .cyan()
+                    .bold()
+            );
+            println!(
+                "{}",
+                console::style("| | | | |_) |  _| |  \\| | / / ")
+                    .cyan()
+                    .bold()
+            );
+            println!(
+                "{}",
+                console::style("| |_| |  __/| |___| |\\  |/ /_ ")
+                    .cyan()
+                    .bold()
+            );
+            println!(
+                "{}",
+                console::style(" \\___/|_|   |_____|_| \\_/____|")
+                    .cyan()
+                    .bold()
+            );
             println!();
-            println!("  {}", console::style("openz - The minimal, self-improving, cutting-edge AI Agent CLI & TUI.").bold());
-            println!("  Type {} for commands, or start chatting!\n", console::style("/help").yellow().bold());
+            println!(
+                "  {}",
+                console::style(
+                    "openz - The minimal, self-improving, cutting-edge AI Agent CLI & TUI."
+                )
+                .bold()
+            );
+            println!(
+                "  Type {} for commands, or start chatting!\n",
+                console::style("/help").yellow().bold()
+            );
 
             // Print Startup Status Dashboard
-            let is_tui_active = TUI_SENDER.try_with(|sender| sender.is_some()).unwrap_or(false);
+            let is_tui_active = TUI_SENDER
+                .try_with(|sender| sender.is_some())
+                .unwrap_or(false);
             if is_tui_active {
                 let (term_w, _) = crossterm::terminal::size().unwrap_or((80, 24));
                 let header_title = "── Status Dashboard ";
                 let remaining_len = (term_w as usize).saturating_sub(header_title.chars().count());
                 let dashes = "─".repeat(remaining_len);
-                println!("{}{}", console::style(header_title).bold(), console::style(dashes).dim());
+                println!(
+                    "{}{}",
+                    console::style(header_title).bold(),
+                    console::style(dashes).dim()
+                );
 
-                let lsp_status = if which::which("rust-analyzer").is_ok() { "Active" } else { "Inactive" };
-                
-                let mcp_servers: Vec<String> = config.mcp.servers.iter().map(|s| s.name.clone()).collect();
+                let lsp_status = if which::which("rust-analyzer").is_ok() {
+                    "Active"
+                } else {
+                    "Inactive"
+                };
+
+                let mcp_servers: Vec<String> =
+                    config.mcp.servers.iter().map(|s| s.name.clone()).collect();
                 let mcp_str = if mcp_servers.is_empty() {
                     "none".to_string()
                 } else {
@@ -3848,14 +3895,13 @@ pub async fn run(
 
                 let display_width = |s: &str| -> usize {
                     let stripped = strip_ansi(s);
-                    stripped.chars().map(|c| {
-                        let val = c as u32;
-                        if c.is_ascii() || val < 0x2000 {
-                            1
-                        } else {
-                            2
-                        }
-                    }).sum()
+                    stripped
+                        .chars()
+                        .map(|c| {
+                            let val = c as u32;
+                            if c.is_ascii() || val < 0x2000 { 1 } else { 2 }
+                        })
+                        .sum()
                 };
 
                 let pad_to_width = |s: &str, width: usize| -> String {
@@ -3868,12 +3914,34 @@ pub async fn run(
                     }
                 };
 
-                let col1_l1 = format!("  🤖 Model: {}/{}", console::style(&provider_name).cyan(), console::style(&model_name).cyan().bold());
-                let col1_l2 = format!("  🛠  MCP: {}", if mcp_str == "none" { console::style("none").dim().to_string() } else { console::style(&mcp_str).cyan().to_string() });
+                let col1_l1 = format!(
+                    "  🤖 Model: {}/{}",
+                    console::style(&provider_name).cyan(),
+                    console::style(&model_name).cyan().bold()
+                );
+                let col1_l2 = format!(
+                    "  🛠  MCP: {}",
+                    if mcp_str == "none" {
+                        console::style("none").dim().to_string()
+                    } else {
+                        console::style(&mcp_str).cyan().to_string()
+                    }
+                );
                 let w1 = std::cmp::max(display_width(&col1_l1), display_width(&col1_l2)) + 2;
 
-                let col2_l1 = format!("  💵 Cost: {} ({})", console::style("$0.00").green(), console::style("0 tokens").dim());
-                let col2_l2 = format!("  📦 Skills: {}", if skills_str == "none" { console::style("none").dim().to_string() } else { console::style(&skills_str).cyan().to_string() });
+                let col2_l1 = format!(
+                    "  💵 Cost: {} ({})",
+                    console::style("$0.00").green(),
+                    console::style("0 tokens").dim()
+                );
+                let col2_l2 = format!(
+                    "  📦 Skills: {}",
+                    if skills_str == "none" {
+                        console::style("none").dim().to_string()
+                    } else {
+                        console::style(&skills_str).cyan().to_string()
+                    }
+                );
                 let w2 = std::cmp::max(display_width(&col2_l1), display_width(&col2_l2)) + 2;
 
                 println!(
@@ -3926,14 +3994,7 @@ pub async fn run(
                         &model_name,
                         &provider_runtime_options,
                     )?;
-                let (
-                    mut tools_registry,
-                    _,
-                    _,
-                    _,
-                    _,
-                    _,
-                ) = tools::all_tools_with_runtime(
+                let (mut tools_registry, _, _, _, _, _) = tools::all_tools_with_runtime(
                     Arc::new(config.clone()),
                     &security,
                     &risk_profile,
@@ -3953,11 +4014,12 @@ pub async fn run(
                     is_subagent_caller,
                 );
 
-                let peripheral_tools: Vec<Box<dyn Tool>> = if let Some(f) = PERIPHERAL_TOOLS_FN.get() {
-                    f(config.peripherals.clone()).await.unwrap_or_default()
-                } else {
-                    vec![]
-                };
+                let peripheral_tools: Vec<Box<dyn Tool>> =
+                    if let Some(f) = PERIPHERAL_TOOLS_FN.get() {
+                        f(config.peripherals.clone()).await.unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
                 if !peripheral_tools.is_empty() {
                     tools_registry.extend(peripheral_tools);
                 }
@@ -3971,35 +4033,56 @@ pub async fn run(
                 tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
 
                 loop {
-                    let is_tui_active = TUI_SENDER.try_with(|sender| sender.is_some()).unwrap_or(false);
+                    let is_tui_active = TUI_SENDER
+                        .try_with(|sender| sender.is_some())
+                        .unwrap_or(false);
                     let input = if is_tui_active {
                         let mut input_buf = String::new();
                         let mut is_eof = false;
                         let commands = vec![
-                            "/help", "/clear", "/new", "/model", "/models", "/skills",
-                            "/mcp", "/status", "/configure", "/logs", "/quit", "/exit"
+                            "/help",
+                            "/clear",
+                            "/new",
+                            "/model",
+                            "/models",
+                            "/skills",
+                            "/mcp",
+                            "/status",
+                            "/configure",
+                            "/logs",
+                            "/quit",
+                            "/exit",
                         ];
                         let mut h;
 
                         if crossterm::terminal::enable_raw_mode().is_ok() {
                             loop {
-                                let (_, current_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                let (_, current_h) =
+                                    crossterm::terminal::size().unwrap_or((80, 24));
                                 h = current_h;
 
                                 // 1. Draw suggestions at H if starting with '/'
                                 if input_buf.starts_with('/') {
-                                    let matching: Vec<&str> = commands.iter()
+                                    let matching: Vec<&str> = commands
+                                        .iter()
                                         .filter(|cmd| cmd.starts_with(&input_buf))
                                         .cloned()
                                         .collect();
-                                    
+
                                     if !matching.is_empty() {
                                         let suggestion_line = format!(
                                             "  {} {}",
                                             console::style("Suggestions:").yellow().bold(),
-                                            matching.iter().map(|cmd| console::style(*cmd).cyan().to_string()).collect::<Vec<String>>().join(", ")
+                                            matching
+                                                .iter()
+                                                .map(|cmd| console::style(*cmd).cyan().to_string())
+                                                .collect::<Vec<String>>()
+                                                .join(", ")
                                         );
-                                        print!("\x1B[s\x1B[{};1H\x1B[K{}\x1B[u", h, suggestion_line);
+                                        print!(
+                                            "\x1B[s\x1B[{};1H\x1B[K{}\x1B[u",
+                                            h, suggestion_line
+                                        );
                                     } else {
                                         print!("\x1B[s\x1B[{};1H\x1B[K\x1B[u", h);
                                     }
@@ -4025,8 +4108,11 @@ pub async fn run(
                                                 }
                                                 crossterm::event::KeyCode::Tab => {
                                                     if input_buf.starts_with('/') {
-                                                        let matching: Vec<&str> = commands.iter()
-                                                            .filter(|cmd| cmd.starts_with(&input_buf))
+                                                        let matching: Vec<&str> = commands
+                                                            .iter()
+                                                            .filter(|cmd| {
+                                                                cmd.starts_with(&input_buf)
+                                                            })
                                                             .cloned()
                                                             .collect();
                                                         if matching.len() == 1 {
@@ -4034,13 +4120,22 @@ pub async fn run(
                                                         }
                                                     }
                                                 }
-                                                crossterm::event::KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                                crossterm::event::KeyCode::Char('c')
+                                                    if key_event.modifiers.contains(
+                                                        crossterm::event::KeyModifiers::CONTROL,
+                                                    ) =>
+                                                {
                                                     let _ = crossterm::terminal::disable_raw_mode();
                                                     std::process::exit(130);
                                                 }
-                                                crossterm::event::KeyCode::Char('d') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                                crossterm::event::KeyCode::Char('d')
+                                                    if key_event.modifiers.contains(
+                                                        crossterm::event::KeyModifiers::CONTROL,
+                                                    ) =>
+                                                {
                                                     if input_buf.is_empty() {
-                                                        let _ = crossterm::terminal::disable_raw_mode();
+                                                        let _ =
+                                                            crossterm::terminal::disable_raw_mode();
                                                         is_eof = true;
                                                         break;
                                                     }
@@ -4071,7 +4166,13 @@ pub async fn run(
                         } else {
                             // Fallback if raw mode fails
                             let mut raw = Vec::new();
-                            if std::io::BufRead::read_until(&mut std::io::stdin().lock(), b'\n', &mut raw).is_ok() {
+                            if std::io::BufRead::read_until(
+                                &mut std::io::stdin().lock(),
+                                b'\n',
+                                &mut raw,
+                            )
+                            .is_ok()
+                            {
                                 String::from_utf8_lossy(&raw).into_owned()
                             } else {
                                 String::new()
@@ -4080,7 +4181,13 @@ pub async fn run(
                     } else {
                         // Fallback in non-TTY mode
                         let mut raw = Vec::new();
-                        if std::io::BufRead::read_until(&mut std::io::stdin().lock(), b'\n', &mut raw).is_ok() {
+                        if std::io::BufRead::read_until(
+                            &mut std::io::stdin().lock(),
+                            b'\n',
+                            &mut raw,
+                        )
+                        .is_ok()
+                        {
                             String::from_utf8_lossy(&raw).into_owned()
                         } else {
                             String::new()
@@ -4093,144 +4200,188 @@ pub async fn run(
 
                     let user_input = input.trim().to_string();
 
-                if is_tui_active {
-                    let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
-                    // 1. Clear H-1 (input line) and H (suggestions line)
-                    print!("\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(1), h);
-                    let _ = std::io::stdout().flush();
-                }
-
-                if user_input.is_empty() {
-                    continue;
-                }
-
-                if is_tui_active {
-                    let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
-                    // 2. Echo the user input at H-3 (inside scroll region) and scroll
-                    print!("\x1B[{};1H> {}\n", h.saturating_sub(3), user_input);
-                    // 3. Move cursor back to H-3 so agent prints start there
-                    print!("\x1B[{};1H", h.saturating_sub(3));
-                    let _ = std::io::stdout().flush();
-                }
-
-                if user_input.starts_with('/') {
-                    let parts: Vec<&str> = user_input.split_whitespace().collect();
-                    let command = parts[0];
-                    if command == "/quit" || command == "/exit" {
-                        break;
-                    } else if command == "/help" {
-                        println!("{}", console::style("Available commands:").yellow().bold());
-                        println!("  {}             Show this help message", console::style("/help").cyan());
-                        println!("  {}       Clear conversation history", console::style("/clear /new").cyan());
-                        println!("  {}      Switch model interactively or via <p>/<m>", console::style("/model /models").cyan());
-                        println!("  {}           List currently installed skills and details", console::style("/skills").cyan());
-                        println!("  {}             List configured MCP servers and details", console::style("/mcp").cyan());
-                        println!("  {}            Show current session status details", console::style("/status").cyan());
-                        println!("  {}        Run the configuration wizard inline", console::style("/configure").cyan());
-                        println!("  {}             Show the last 20 log events", console::style("/logs").cyan());
-                        println!("  {}       Exit interactive mode", console::style("/quit /exit").cyan());
-                        println!(
-                            "  {}    Set reasoning depth (off|minimal|low|medium|high|max)\n",
-                            console::style("/think:<level>").cyan()
-                        );
-                        continue;
-                    } else if command == "/clear" || command == "/new" {
-                        let confirm = if is_tui_active {
-                            let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
-                            crate::agent::tui_events::TUI_SUSPENDED.store(true, std::sync::atomic::Ordering::SeqCst);
-                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
-                            // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
-                            print!("\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(2), h.saturating_sub(1), h);
-                            let _ = std::io::stdout().flush();
-
-                            println!(
-                                "This will clear the current conversation and delete all session memory."
-                            );
-                            println!("Core memories (long-term facts/preferences) will be preserved.");
-                            print!("Continue? [y/N] ");
-                            let _ = std::io::stdout().flush();
-
-                            let mut confirm_raw = Vec::new();
-                            let read_res = std::io::BufRead::read_until(
-                                &mut std::io::stdin().lock(),
-                                b'\n',
-                                &mut confirm_raw,
-                            );
-
-                            let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
-                            // Restore terminal scroll region to 1..=H-3 and cursor position
-                            print!("\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H", new_h.saturating_sub(3), new_h.saturating_sub(3));
-                            let _ = std::io::stdout().flush();
-                            crate::agent::tui_events::TUI_SUSPENDED.store(false, std::sync::atomic::Ordering::SeqCst);
-                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
-
-                            if read_res.is_ok() {
-                                String::from_utf8_lossy(&confirm_raw).into_owned()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            println!(
-                                "This will clear the current conversation and delete all session memory."
-                            );
-                            println!("Core memories (long-term facts/preferences) will be preserved.");
-                            print!("Continue? [y/N] ");
-                            let _ = std::io::stdout().flush();
-
-                            let mut confirm_raw = Vec::new();
-                            if std::io::BufRead::read_until(
-                                &mut std::io::stdin().lock(),
-                                b'\n',
-                                &mut confirm_raw,
-                            )
-                            .is_ok() {
-                                String::from_utf8_lossy(&confirm_raw).into_owned()
-                            } else {
-                                String::new()
-                            }
-                        };
-
-                        if !matches!(confirm.trim().to_lowercase().as_str(), "y" | "yes") {
-                            println!("Cancelled.\n");
-                            continue;
-                        }
-
-                        print!("\x1B[2J\x1B[1;1H");
+                    if is_tui_active {
+                        let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                        // 1. Clear H-1 (input line) and H (suggestions line)
+                        print!("\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(1), h);
                         let _ = std::io::stdout().flush();
+                    }
 
-                        history.clear();
-                        history.push(ChatMessage::system(&system_prompt));
-                        // Clear conversation and daily memory
-                        let mut cleared = 0;
-                        for category in [MemoryCategory::Conversation, MemoryCategory::Daily] {
-                            let entries = mem.list(Some(&category), None).await.unwrap_or_default();
-                            for entry in entries {
-                                if mem.forget(&entry.key).await.unwrap_or(false) {
-                                    cleared += 1;
+                    if user_input.is_empty() {
+                        continue;
+                    }
+
+                    if is_tui_active {
+                        let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                        // 2. Echo the user input at H-3 (inside scroll region) and scroll
+                        print!("\x1B[{};1H> {}\n", h.saturating_sub(3), user_input);
+                        // 3. Move cursor back to H-3 so agent prints start there
+                        print!("\x1B[{};1H", h.saturating_sub(3));
+                        let _ = std::io::stdout().flush();
+                    }
+
+                    if user_input.starts_with('/') {
+                        let parts: Vec<&str> = user_input.split_whitespace().collect();
+                        let command = parts[0];
+                        if command == "/quit" || command == "/exit" {
+                            break;
+                        } else if command == "/help" {
+                            println!("{}", console::style("Available commands:").yellow().bold());
+                            println!(
+                                "  {}             Show this help message",
+                                console::style("/help").cyan()
+                            );
+                            println!(
+                                "  {}       Clear conversation history",
+                                console::style("/clear /new").cyan()
+                            );
+                            println!(
+                                "  {}      Switch model interactively or via <p>/<m>",
+                                console::style("/model /models").cyan()
+                            );
+                            println!(
+                                "  {}           List currently installed skills and details",
+                                console::style("/skills").cyan()
+                            );
+                            println!(
+                                "  {}             List configured MCP servers and details",
+                                console::style("/mcp").cyan()
+                            );
+                            println!(
+                                "  {}            Show current session status details",
+                                console::style("/status").cyan()
+                            );
+                            println!(
+                                "  {}        Run the configuration wizard inline",
+                                console::style("/configure").cyan()
+                            );
+                            println!(
+                                "  {}             Show the last 20 log events",
+                                console::style("/logs").cyan()
+                            );
+                            println!(
+                                "  {}       Exit interactive mode",
+                                console::style("/quit /exit").cyan()
+                            );
+                            println!(
+                                "  {}    Set reasoning depth (off|minimal|low|medium|high|max)\n",
+                                console::style("/think:<level>").cyan()
+                            );
+                            continue;
+                        } else if command == "/clear" || command == "/new" {
+                            let confirm = if is_tui_active {
+                                let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                crate::agent::tui_events::TUI_SUSPENDED
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
+                                // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
+                                print!(
+                                    "\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K",
+                                    h.saturating_sub(2),
+                                    h.saturating_sub(1),
+                                    h
+                                );
+                                let _ = std::io::stdout().flush();
+
+                                println!(
+                                    "This will clear the current conversation and delete all session memory."
+                                );
+                                println!(
+                                    "Core memories (long-term facts/preferences) will be preserved."
+                                );
+                                print!("Continue? [y/N] ");
+                                let _ = std::io::stdout().flush();
+
+                                let mut confirm_raw = Vec::new();
+                                let read_res = std::io::BufRead::read_until(
+                                    &mut std::io::stdin().lock(),
+                                    b'\n',
+                                    &mut confirm_raw,
+                                );
+
+                                let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                // Restore terminal scroll region to 1..=H-3 and cursor position
+                                print!(
+                                    "\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H",
+                                    new_h.saturating_sub(3),
+                                    new_h.saturating_sub(3)
+                                );
+                                let _ = std::io::stdout().flush();
+                                crate::agent::tui_events::TUI_SUSPENDED
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
+
+                                if read_res.is_ok() {
+                                    String::from_utf8_lossy(&confirm_raw).into_owned()
+                                } else {
+                                    String::new()
+                                }
+                            } else {
+                                println!(
+                                    "This will clear the current conversation and delete all session memory."
+                                );
+                                println!(
+                                    "Core memories (long-term facts/preferences) will be preserved."
+                                );
+                                print!("Continue? [y/N] ");
+                                let _ = std::io::stdout().flush();
+
+                                let mut confirm_raw = Vec::new();
+                                if std::io::BufRead::read_until(
+                                    &mut std::io::stdin().lock(),
+                                    b'\n',
+                                    &mut confirm_raw,
+                                )
+                                .is_ok()
+                                {
+                                    String::from_utf8_lossy(&confirm_raw).into_owned()
+                                } else {
+                                    String::new()
+                                }
+                            };
+
+                            if !matches!(confirm.trim().to_lowercase().as_str(), "y" | "yes") {
+                                println!("Cancelled.\n");
+                                continue;
+                            }
+
+                            print!("\x1B[2J\x1B[1;1H");
+                            let _ = std::io::stdout().flush();
+
+                            history.clear();
+                            history.push(ChatMessage::system(&system_prompt));
+                            // Clear conversation and daily memory
+                            let mut cleared = 0;
+                            for category in [MemoryCategory::Conversation, MemoryCategory::Daily] {
+                                let entries =
+                                    mem.list(Some(&category), None).await.unwrap_or_default();
+                                for entry in entries {
+                                    if mem.forget(&entry.key).await.unwrap_or(false) {
+                                        cleared += 1;
+                                    }
                                 }
                             }
-                        }
-                        if cleared > 0 {
-                            println!("Conversation cleared ({cleared} memory entries removed).\n");
-                        } else {
-                            println!("Conversation cleared.\n");
-                        }
-                        if let Some(path) = session_state_file.as_deref() {
-                            save_interactive_session_history(path, &history)?;
-                        }
-                        continue;
-                    } else if command == "/model" || command == "/models" {
-                        if parts.len() >= 2 {
-                            let target = parts[1];
-                            if let Some((p, m)) = target.split_once('/') {
-                                let new_provider_name = p.trim().to_string();
-                                let new_model_name = m.trim().to_string();
-                                let new_agent_model_provider = config
-                                    .providers
-                                    .models
-                                    .find(&new_provider_name, "default");
-                                
-                                match zeroclaw_providers::create_routed_model_provider_with_options(
+                            if cleared > 0 {
+                                println!(
+                                    "Conversation cleared ({cleared} memory entries removed).\n"
+                                );
+                            } else {
+                                println!("Conversation cleared.\n");
+                            }
+                            if let Some(path) = session_state_file.as_deref() {
+                                save_interactive_session_history(path, &history)?;
+                            }
+                            continue;
+                        } else if command == "/model" || command == "/models" {
+                            if parts.len() >= 2 {
+                                let target = parts[1];
+                                if let Some((p, m)) = target.split_once('/') {
+                                    let new_provider_name = p.trim().to_string();
+                                    let new_model_name = m.trim().to_string();
+                                    let new_agent_model_provider =
+                                        config.providers.models.find(&new_provider_name, "default");
+
+                                    match zeroclaw_providers::create_routed_model_provider_with_options(
                                     &config,
                                     &new_provider_name,
                                     new_agent_model_provider.and_then(|e| e.api_key.as_deref()),
@@ -4251,9 +4402,9 @@ pub async fn run(
                                                 provider_name, model_name
                                             ))
                                             .green()
-                                            .bold()
+                                                                                        .bold()
                                         );
-                                        
+
                                         observer.record_event(&ObserverEvent::AgentStart {
                                             model_provider: provider_name.to_string(),
                                             model: model_name.to_string(),
@@ -4271,79 +4422,104 @@ pub async fn run(
                                         );
                                     }
                                 }
-                            } else {
-                                println!(
+                                } else {
+                                    println!(
                                     "{}",
                                     console::style("Usage: /model <provider>/<model> (e.g., /model openai/gpt-4o)")
                                         .yellow()
                                         .bold()
                                 );
+                                }
+                                continue;
                             }
-                            continue;
-                        }
 
-                        // Interactive Selection
-                        let mut models_list = Vec::new();
-                        for (p_type, p_alias, profile) in config.providers.models.iter_entries() {
-                            let model_id = match &profile.model {
-                                Some(m) if !m.is_empty() => m.clone(),
-                                _ => "default".to_string(),
+                            // Interactive Selection
+                            let mut models_list = Vec::new();
+                            for (p_type, p_alias, profile) in config.providers.models.iter_entries()
+                            {
+                                let model_id = match &profile.model {
+                                    Some(m) if !m.is_empty() => m.clone(),
+                                    _ => "default".to_string(),
+                                };
+                                models_list.push((
+                                    p_type.to_string(),
+                                    p_alias.to_string(),
+                                    model_id,
+                                ));
+                            }
+
+                            if models_list.is_empty() {
+                                println!(
+                                    "{}",
+                                    console::style(
+                                        "No models or providers configured in config.toml."
+                                    )
+                                    .yellow()
+                                    .bold()
+                                );
+                                println!(
+                                    "Run {} to configure one.",
+                                    console::style("/configure").cyan().bold()
+                                );
+                                continue;
+                            }
+
+                            let mut items = Vec::new();
+                            for (p_type, p_alias, model_id) in &models_list {
+                                items.push(format!("{p_type}.{p_alias} ({model_id})"));
+                            }
+                            items.push("Cancel".to_string());
+
+                            use dialoguer::Select;
+                            let selection = if is_tui_active {
+                                let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                crate::agent::tui_events::TUI_SUSPENDED
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
+                                // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
+                                print!(
+                                    "\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K",
+                                    h.saturating_sub(2),
+                                    h.saturating_sub(1),
+                                    h
+                                );
+                                let _ = std::io::stdout().flush();
+
+                                let sel = Select::new()
+                                    .with_prompt("Select active model")
+                                    .items(&items)
+                                    .default(0)
+                                    .interact();
+
+                                let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                // Restore terminal scroll region to 1..=H-3 and cursor position
+                                print!(
+                                    "\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H",
+                                    new_h.saturating_sub(3),
+                                    new_h.saturating_sub(3)
+                                );
+                                let _ = std::io::stdout().flush();
+                                crate::agent::tui_events::TUI_SUSPENDED
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
+
+                                sel
+                            } else {
+                                Select::new()
+                                    .with_prompt("Select active model")
+                                    .items(&items)
+                                    .default(0)
+                                    .interact()
                             };
-                            models_list.push((p_type.to_string(), p_alias.to_string(), model_id));
-                        }
 
-                        if models_list.is_empty() {
-                            println!("{}", console::style("No models or providers configured in config.toml.").yellow().bold());
-                            println!("Run {} to configure one.", console::style("/configure").cyan().bold());
-                            continue;
-                        }
+                            match selection {
+                                Ok(idx) if idx < models_list.len() => {
+                                    let (new_provider_name, new_alias, new_model_name) =
+                                        &models_list[idx];
+                                    let new_agent_model_provider =
+                                        config.providers.models.find(new_provider_name, new_alias);
 
-                        let mut items = Vec::new();
-                        for (p_type, p_alias, model_id) in &models_list {
-                            items.push(format!("{p_type}.{p_alias} ({model_id})"));
-                        }
-                        items.push("Cancel".to_string());
-
-                        use dialoguer::Select;
-                        let selection = if is_tui_active {
-                            let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
-                            crate::agent::tui_events::TUI_SUSPENDED.store(true, std::sync::atomic::Ordering::SeqCst);
-                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
-                            // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
-                            print!("\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(2), h.saturating_sub(1), h);
-                            let _ = std::io::stdout().flush();
-
-                            let sel = Select::new()
-                                .with_prompt("Select active model")
-                                .items(&items)
-                                .default(0)
-                                .interact();
-
-                            let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
-                            // Restore terminal scroll region to 1..=H-3 and cursor position
-                            print!("\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H", new_h.saturating_sub(3), new_h.saturating_sub(3));
-                            let _ = std::io::stdout().flush();
-                            crate::agent::tui_events::TUI_SUSPENDED.store(false, std::sync::atomic::Ordering::SeqCst);
-                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
-
-                            sel
-                        } else {
-                            Select::new()
-                                .with_prompt("Select active model")
-                                .items(&items)
-                                .default(0)
-                                .interact()
-                        };
-
-                        match selection {
-                            Ok(idx) if idx < models_list.len() => {
-                                let (new_provider_name, new_alias, new_model_name) = &models_list[idx];
-                                let new_agent_model_provider = config
-                                    .providers
-                                    .models
-                                    .find(new_provider_name, new_alias);
-                                
-                                match zeroclaw_providers::create_routed_model_provider_with_options(
+                                    match zeroclaw_providers::create_routed_model_provider_with_options(
                                     &config,
                                     new_provider_name,
                                     new_agent_model_provider.and_then(|e| e.api_key.as_deref()),
@@ -4364,9 +4540,9 @@ pub async fn run(
                                                 provider_name, model_name
                                             ))
                                             .green()
-                                            .bold()
+                                                                                        .bold()
                                         );
-                                        
+
                                         observer.record_event(&ObserverEvent::AgentStart {
                                             model_provider: provider_name.to_string(),
                                             model: model_name.to_string(),
@@ -4384,277 +4560,303 @@ pub async fn run(
                                         );
                                     }
                                 }
-                            }
-                            _ => {
-                                println!("Cancelled.");
-                            }
-                        }
-                        continue;
-                    } else if command == "/skills" {
-                        let loaded_skills = crate::skills::load_skills_with_config(&config.data_dir, &config);
-                        if loaded_skills.is_empty() {
-                            println!("{}", console::style("No skills installed.").dim());
-                        } else {
-                            println!("{}", console::style("Installed Skills:").cyan().bold());
-                            for skill in &loaded_skills {
-                                println!(
-                                    "  {} {} (v{})",
-                                    console::style("✦").cyan().bold(),
-                                    console::style(&skill.name).bold(),
-                                    console::style(&skill.version).dim()
-                                );
-                                println!("    {}", console::style(&skill.description).dim());
-                                if !skill.tools.is_empty() {
-                                    print!("    Tools: ");
-                                    let tool_names: Vec<String> = skill.tools.iter().map(|t| t.name.clone()).collect();
-                                    println!("{}", tool_names.join(", "));
                                 }
-                                println!();
+                                _ => {
+                                    println!("Cancelled.");
+                                }
                             }
-                        }
-                        continue;
-                    } else if command == "/mcp" {
-                        if !config.mcp.enabled {
-                            println!("{}", console::style("MCP is currently disabled in your config.toml.").yellow().bold());
                             continue;
-                        }
-                        if config.mcp.servers.is_empty() {
-                            println!("{}", console::style("No MCP servers configured.").dim());
+                        } else if command == "/skills" {
+                            let loaded_skills =
+                                crate::skills::load_skills_with_config(&config.data_dir, &config);
+                            if loaded_skills.is_empty() {
+                                println!("{}", console::style("No skills installed.").dim());
+                            } else {
+                                println!("{}", console::style("Installed Skills:").cyan().bold());
+                                for skill in &loaded_skills {
+                                    println!(
+                                        "  {} {} (v{})",
+                                        console::style("✦").cyan().bold(),
+                                        console::style(&skill.name).bold(),
+                                        console::style(&skill.version).dim()
+                                    );
+                                    println!("    {}", console::style(&skill.description).dim());
+                                    if !skill.tools.is_empty() {
+                                        print!("    Tools: ");
+                                        let tool_names: Vec<String> =
+                                            skill.tools.iter().map(|t| t.name.clone()).collect();
+                                        println!("{}", tool_names.join(", "));
+                                    }
+                                    println!();
+                                }
+                            }
                             continue;
-                        }
-                        println!("{}", console::style("Configured MCP Servers:").cyan().bold());
-                        for server in &config.mcp.servers {
+                        } else if command == "/mcp" {
+                            if !config.mcp.enabled {
+                                println!(
+                                    "{}",
+                                    console::style(
+                                        "MCP is currently disabled in your config.toml."
+                                    )
+                                    .yellow()
+                                    .bold()
+                                );
+                                continue;
+                            }
+                            if config.mcp.servers.is_empty() {
+                                println!("{}", console::style("No MCP servers configured.").dim());
+                                continue;
+                            }
                             println!(
-                                "  ✦ {} (Command: {})",
-                                console::style(&server.name).bold(),
-                                console::style(format!("{:?}", server)).dim()
+                                "{}",
+                                console::style("Configured MCP Servers:").cyan().bold()
                             );
+                            for server in &config.mcp.servers {
+                                println!(
+                                    "  ✦ {} (Command: {})",
+                                    console::style(&server.name).bold(),
+                                    console::style(format!("{:?}", server)).dim()
+                                );
+                            }
+                            continue;
+                        } else if command == "/configure" {
+                            let mut config_mut = config.clone();
+                            let wizard_res = if is_tui_active {
+                                let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                crate::agent::tui_events::TUI_SUSPENDED
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
+                                // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
+                                print!(
+                                    "\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K",
+                                    h.saturating_sub(2),
+                                    h.saturating_sub(1),
+                                    h
+                                );
+                                let _ = std::io::stdout().flush();
+
+                                let res = run_configure_wizard_inline(&mut config_mut).await;
+
+                                let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                                // Restore terminal scroll region to 1..=H-3 and cursor position
+                                print!(
+                                    "\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H",
+                                    new_h.saturating_sub(3),
+                                    new_h.saturating_sub(3)
+                                );
+                                let _ = std::io::stdout().flush();
+                                crate::agent::tui_events::TUI_SUSPENDED
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
+
+                                res
+                            } else {
+                                run_configure_wizard_inline(&mut config_mut).await
+                            };
+
+                            match wizard_res {
+                                Ok(()) => {
+                                    config = config_mut;
+                                }
+                                Err(e) => {
+                                    println!("Configuration failed: {e}");
+                                }
+                            }
+                            continue;
+                        } else if command == "/logs" {
+                            if let Err(e) = print_last_logs(&config) {
+                                println!("Failed to print logs: {e}");
+                            }
+                            continue;
+                        } else if command == "/status" {
+                            println!("{}", console::style("Active Session Status:").cyan().bold());
+                            println!(
+                                "  {} Provider: {}",
+                                console::style("✦").cyan(),
+                                console::style(&provider_name).bold()
+                            );
+                            println!(
+                                "  {} Model: {}",
+                                console::style("✦").cyan(),
+                                console::style(&model_name).bold()
+                            );
+                            println!(
+                                "  {} Temperature: {}",
+                                console::style("✦").cyan(),
+                                console::style(format!("{:?}", temperature)).bold()
+                            );
+                            println!(
+                                "  {} Session Memory Key: {}",
+                                console::style("✦").cyan(),
+                                console::style(memory_session_id.as_deref().unwrap_or("none"))
+                                    .dim()
+                            );
+                            continue;
                         }
-                        continue;
-                    } else if command == "/configure" {
-                        let mut config_mut = config.clone();
-                        let wizard_res = if is_tui_active {
-                            let (_, h) = crossterm::terminal::size().unwrap_or((80, 24));
-                            crate::agent::tui_events::TUI_SUSPENDED.store(true, std::sync::atomic::Ordering::SeqCst);
-                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Suspended);
-                            // Clear status line row (H-2), input (H-1), suggestions (H), and reset scroll region
-                            print!("\x1B[r\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K\x1B[{};1H\x1B[K", h.saturating_sub(2), h.saturating_sub(1), h);
-                            let _ = std::io::stdout().flush();
+                    }
 
-                            let res = run_configure_wizard_inline(&mut config_mut).await;
-
-                            let (_, new_h) = crossterm::terminal::size().unwrap_or((80, 24));
-                            // Restore terminal scroll region to 1..=H-3 and cursor position
-                            print!("\x1B[s\x1B[1;{}r\x1B[u\x1B[{};1H", new_h.saturating_sub(3), new_h.saturating_sub(3));
-                            let _ = std::io::stdout().flush();
-                            crate::agent::tui_events::TUI_SUSPENDED.store(false, std::sync::atomic::Ordering::SeqCst);
-                            emit_tui_event(crate::agent::tui_events::RuntimeEvent::Resumed);
-
-                            res
-                        } else {
-                            run_configure_wizard_inline(&mut config_mut).await
+                    // ── Parse thinking directive from interactive input ───
+                    let (thinking_directive, effective_input) =
+                        match crate::agent::thinking::parse_thinking_directive(&user_input) {
+                            Some((level, remaining)) => {
+                                ::zeroclaw_log::record!(
+                                    INFO,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_attrs(::serde_json::json!({"thinking_level": level})),
+                                    "Thinking directive parsed"
+                                );
+                                (Some(level), remaining)
+                            }
+                            None => (None, user_input.clone()),
                         };
-
-                        match wizard_res {
-                            Ok(()) => {
-                                config = config_mut;
-                            }
-                            Err(e) => {
-                                println!("Configuration failed: {e}");
-                            }
-                        }
-                        continue;
-                    } else if command == "/logs" {
-                        if let Err(e) = print_last_logs(&config) {
-                            println!("Failed to print logs: {e}");
-                        }
-                        continue;
-                    } else if command == "/status" {
-                        println!("{}", console::style("Active Session Status:").cyan().bold());
-                        println!("  {} Provider: {}", console::style("✦").cyan(), console::style(&provider_name).bold());
-                        println!("  {} Model: {}", console::style("✦").cyan(), console::style(&model_name).bold());
-                        println!("  {} Temperature: {}", console::style("✦").cyan(), console::style(format!("{:?}", temperature)).bold());
-                        println!("  {} Session Memory Key: {}", console::style("✦").cyan(), console::style(memory_session_id.as_deref().unwrap_or("none")).dim());
-                        continue;
-                    }
-                }
-
-                // ── Parse thinking directive from interactive input ───
-                let (thinking_directive, effective_input) =
-                    match crate::agent::thinking::parse_thinking_directive(&user_input) {
-                        Some((level, remaining)) => {
-                            ::zeroclaw_log::record!(
-                                INFO,
-                                ::zeroclaw_log::Event::new(
-                                    module_path!(),
-                                    ::zeroclaw_log::Action::Note
-                                )
-                                .with_attrs(::serde_json::json!({"thinking_level": level})),
-                                "Thinking directive parsed"
-                            );
-                            (Some(level), remaining)
-                        }
-                        None => (None, user_input.clone()),
-                    };
-                let thinking_level = crate::agent::thinking::resolve_thinking_level(
-                    thinking_directive,
-                    None,
-                    &agent.thinking,
-                );
-                let thinking_params = crate::agent::thinking::apply_thinking_level(thinking_level);
-                let turn_temperature: Option<f64> = temperature.map(|t| {
-                    crate::agent::thinking::clamp_temperature(
-                        t + thinking_params.temperature_adjustment,
-                    )
-                });
-
-                // For non-Medium levels, temporarily patch the system prompt with prefix.
-                let turn_system_prompt;
-                if let Some(ref prefix) = thinking_params.system_prompt_prefix {
-                    turn_system_prompt = format!("{prefix}\n\n{system_prompt}");
-                    // Update the system message in history for this turn.
-                    if let Some(sys_msg) = history.first_mut()
-                        && sys_msg.role == "system"
-                    {
-                        sys_msg.content = turn_system_prompt.clone();
-                    }
-                }
-
-                if let Some(suggestion) = crate::skills::render_missing_skill_install_suggestion(
-                    &effective_input,
-                    &skills,
-                    &config.data_dir,
-                    config.skills.install_suggestions.enabled,
-                ) {
-                    final_output = suggestion.clone();
-                    if let Err(e) = zeroclaw_api::channel::Channel::send(
-                        &*cli,
-                        &zeroclaw_api::channel::SendMessage::new(
-                            format!("\n{suggestion}\n"),
-                            "user",
-                        ),
-                    )
-                    .await
-                    {
-                        eprintln!("\nError sending CLI response: {e}\n");
-                    }
-                    observer.record_event(&ObserverEvent::TurnComplete);
-                    if thinking_params.system_prompt_prefix.is_some()
-                        && let Some(sys_msg) = history.first_mut()
-                        && sys_msg.role == "system"
-                    {
-                        sys_msg.content.clone_from(&base_system_prompt);
-                    }
-                    continue;
-                }
-
-                // Auto-save conversation turns (skip short/trivial messages)
-                if config.memory.auto_save
-                    && effective_input.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
-                    && !zeroclaw_memory::should_skip_autosave_content(&effective_input)
-                {
-                    let user_key = autosave_memory_key("user_msg");
-                    let _ = mem
-                        .store(
-                            &user_key,
-                            &effective_input,
-                            MemoryCategory::Conversation,
-                            memory_session_id.as_deref(),
+                    let thinking_level = crate::agent::thinking::resolve_thinking_level(
+                        thinking_directive,
+                        None,
+                        &agent.thinking,
+                    );
+                    let thinking_params =
+                        crate::agent::thinking::apply_thinking_level(thinking_level);
+                    let turn_temperature: Option<f64> = temperature.map(|t| {
+                        crate::agent::thinking::clamp_temperature(
+                            t + thinking_params.temperature_adjustment,
                         )
-                        .await;
-                }
+                    });
 
-                // Inject memory + hardware RAG context into user message.
-                // Interactive REPL: keep Conversation memories (user is actively
-                // chatting in this session and may want their own history recalled).
-                let mem_context = build_context(
-                    mem.as_ref(),
-                    &effective_input,
-                    config.memory.min_relevance_score,
-                    memory_session_id.as_deref(),
-                    false,
-                )
-                .await;
-                let rag_limit = if agent.compact_context { 2 } else { 5 };
-                let hw_context = hardware_rag
-                    .as_ref()
-                    .map(|r| build_hardware_context(r, &effective_input, &board_names, rag_limit))
-                    .unwrap_or_default();
-                let context = format!("{mem_context}{hw_context}");
-                let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
-                let enriched = if context.is_empty() {
-                    format!("[{now}] {effective_input}")
-                } else {
-                    format!("{context}[{now}] {effective_input}")
-                };
+                    // For non-Medium levels, temporarily patch the system prompt with prefix.
+                    let turn_system_prompt;
+                    if let Some(ref prefix) = thinking_params.system_prompt_prefix {
+                        turn_system_prompt = format!("{prefix}\n\n{system_prompt}");
+                        // Update the system message in history for this turn.
+                        if let Some(sys_msg) = history.first_mut()
+                            && sys_msg.role == "system"
+                        {
+                            sys_msg.content = turn_system_prompt.clone();
+                        }
+                    }
 
-                history.push(ChatMessage::user(&enriched));
+                    if let Some(suggestion) = crate::skills::render_missing_skill_install_suggestion(
+                        &effective_input,
+                        &skills,
+                        &config.data_dir,
+                        config.skills.install_suggestions.enabled,
+                    ) {
+                        final_output = suggestion.clone();
+                        if let Err(e) = zeroclaw_api::channel::Channel::send(
+                            &*cli,
+                            &zeroclaw_api::channel::SendMessage::new(
+                                format!("\n{suggestion}\n"),
+                                "user",
+                            ),
+                        )
+                        .await
+                        {
+                            eprintln!("\nError sending CLI response: {e}\n");
+                        }
+                        observer.record_event(&ObserverEvent::TurnComplete);
+                        if thinking_params.system_prompt_prefix.is_some()
+                            && let Some(sys_msg) = history.first_mut()
+                            && sys_msg.role == "system"
+                        {
+                            sys_msg.content.clone_from(&base_system_prompt);
+                        }
+                        continue;
+                    }
 
-                // Compute per-turn excluded MCP tools from tool_filter_groups.
-                let excluded_tools = compute_excluded_mcp_tools(
-                    &tools_registry,
-                    &agent.tool_filter_groups,
-                    &effective_input,
-                );
+                    // Auto-save conversation turns (skip short/trivial messages)
+                    if config.memory.auto_save
+                        && effective_input.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
+                        && !zeroclaw_memory::should_skip_autosave_content(&effective_input)
+                    {
+                        let user_key = autosave_memory_key("user_msg");
+                        let _ = mem
+                            .store(
+                                &user_key,
+                                &effective_input,
+                                MemoryCategory::Conversation,
+                                memory_session_id.as_deref(),
+                            )
+                            .await;
+                    }
 
-                // Set up streaming channel so tool progress and response
-                // content are printed progressively instead of buffered.
-                let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel::<DraftEvent>(64);
-                let content_was_streamed =
-                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let content_streamed_flag = content_was_streamed.clone();
+                    // Inject memory + hardware RAG context into user message.
+                    // Interactive REPL: keep Conversation memories (user is actively
+                    // chatting in this session and may want their own history recalled).
+                    let mem_context = build_context(
+                        mem.as_ref(),
+                        &effective_input,
+                        config.memory.min_relevance_score,
+                        memory_session_id.as_deref(),
+                        false,
+                    )
+                    .await;
+                    let rag_limit = if agent.compact_context { 2 } else { 5 };
+                    let hw_context = hardware_rag
+                        .as_ref()
+                        .map(|r| {
+                            build_hardware_context(r, &effective_input, &board_names, rag_limit)
+                        })
+                        .unwrap_or_default();
+                    let context = format!("{mem_context}{hw_context}");
+                    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
+                    let enriched = if context.is_empty() {
+                        format!("[{now}] {effective_input}")
+                    } else {
+                        format!("{context}[{now}] {effective_input}")
+                    };
 
+                    history.push(ChatMessage::user(&enriched));
 
-                let consumer_handle = tokio::spawn(async move {
-                    use std::io::Write;
-                    let mut in_think = false;
-                    let mut pending_buffer = String::new();
-                    let mut has_printed_anything = false;
+                    // Compute per-turn excluded MCP tools from tool_filter_groups.
+                    let excluded_tools = compute_excluded_mcp_tools(
+                        &tools_registry,
+                        &agent.tool_filter_groups,
+                        &effective_input,
+                    );
 
-                    while let Some(event) = delta_rx.recv().await {
-                        match event {
-                            StreamDelta::Status(text) => {
-                                let premium_text = format_premium_status(&text);
-                                let _ = write!(std::io::stderr(), "{premium_text}");
-                                let _ = std::io::stderr().flush();
-                            }
-                            StreamDelta::Text(text) => {
-                                content_streamed_flag
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                                pending_buffer.push_str(&text);
+                    // Set up streaming channel so tool progress and response
+                    // content are printed progressively instead of buffered.
+                    let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel::<DraftEvent>(64);
+                    let content_was_streamed =
+                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let content_streamed_flag = content_was_streamed.clone();
 
-                                loop {
-                                    if in_think {
-                                        if let Some(pos) = pending_buffer.find("</think>") {
-                                            pending_buffer.drain(..pos + 8);
-                                            in_think = false;
-                                        } else {
-                                            if pending_buffer.len() > 8 {
-                                                let keep_start = pending_buffer.len() - 8;
-                                                pending_buffer.drain(..keep_start);
-                                            }
-                                            break;
-                                        }
-                                    } else {
-                                        if let Some(pos) = pending_buffer.find("<think>") {
-                                            let mut prefix: String = pending_buffer.drain(..pos).collect();
-                                            if !has_printed_anything {
-                                                let trimmed = prefix.trim_start();
-                                                if !trimmed.is_empty() {
-                                                    prefix = trimmed.to_string();
-                                                    has_printed_anything = true;
+                    let consumer_handle = tokio::spawn(async move {
+                        use std::io::Write;
+                        let mut in_think = false;
+                        let mut pending_buffer = String::new();
+                        let mut has_printed_anything = false;
+
+                        while let Some(event) = delta_rx.recv().await {
+                            match event {
+                                StreamDelta::Status(text) => {
+                                    let premium_text = format_premium_status(&text);
+                                    let _ = write!(std::io::stderr(), "{premium_text}");
+                                    let _ = std::io::stderr().flush();
+                                }
+                                StreamDelta::Text(text) => {
+                                    content_streamed_flag
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    pending_buffer.push_str(&text);
+
+                                    loop {
+                                        if in_think {
+                                            if let Some(pos) = pending_buffer.find("</think>") {
+                                                pending_buffer.drain(..pos + 8);
+                                                in_think = false;
+                                            } else {
+                                                if pending_buffer.len() > 8 {
+                                                    let keep_start = pending_buffer.len() - 8;
+                                                    pending_buffer.drain(..keep_start);
                                                 }
+                                                break;
                                             }
-                                            if !prefix.is_empty() {
-                                                print!("{prefix}");
-                                                let _ = std::io::stdout().flush();
-                                            }
-                                            pending_buffer.drain(..7);
-                                            in_think = true;
                                         } else {
-                                            if pending_buffer.len() > 7 {
-                                                let print_len = pending_buffer.len() - 7;
-                                                let mut prefix: String = pending_buffer.drain(..print_len).collect();
+                                            if let Some(pos) = pending_buffer.find("<think>") {
+                                                let mut prefix: String =
+                                                    pending_buffer.drain(..pos).collect();
                                                 if !has_printed_anything {
                                                     let trimmed = prefix.trim_start();
                                                     if !trimmed.is_empty() {
@@ -4666,113 +4868,140 @@ pub async fn run(
                                                     print!("{prefix}");
                                                     let _ = std::io::stdout().flush();
                                                 }
+                                                pending_buffer.drain(..7);
+                                                in_think = true;
+                                            } else {
+                                                if pending_buffer.len() > 7 {
+                                                    let print_len = pending_buffer.len() - 7;
+                                                    let mut prefix: String =
+                                                        pending_buffer.drain(..print_len).collect();
+                                                    if !has_printed_anything {
+                                                        let trimmed = prefix.trim_start();
+                                                        if !trimmed.is_empty() {
+                                                            prefix = trimmed.to_string();
+                                                            has_printed_anything = true;
+                                                        }
+                                                    }
+                                                    if !prefix.is_empty() {
+                                                        print!("{prefix}");
+                                                        let _ = std::io::stdout().flush();
+                                                    }
+                                                }
+                                                break;
                                             }
-                                            break;
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    if !in_think && !pending_buffer.is_empty() {
-                        let mut final_text = pending_buffer;
-                        if !has_printed_anything {
-                            final_text = final_text.trim_start().to_string();
+                        if !in_think && !pending_buffer.is_empty() {
+                            let mut final_text = pending_buffer;
+                            if !has_printed_anything {
+                                final_text = final_text.trim_start().to_string();
+                            }
+                            if !final_text.is_empty() {
+                                print!("{final_text}");
+                                let _ = std::io::stdout().flush();
+                            }
                         }
-                        if !final_text.is_empty() {
-                            print!("{final_text}");
-                            let _ = std::io::stdout().flush();
-                        }
-                    }
-                });
+                    });
 
-                // Spawn a key listener task to detect Ctrl+C and Esc keypresses while the model runs.
-                let cancel_token = CancellationToken::new();
-                let cancel_token_clone = cancel_token.clone();
-                let key_listener_handle = tokio::spawn(async move {
-                    if let Ok(()) = crossterm::terminal::enable_raw_mode() {
-                        loop {
-                            if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(50)) {
-                                if let Ok(crossterm::event::Event::Key(key_event)) = crossterm::event::read() {
-                                    if key_event.code == crossterm::event::KeyCode::Esc {
-                                        cancel_token_clone.cancel();
-                                        break;
-                                    }
-                                    if key_event.code == crossterm::event::KeyCode::Char('c')
-                                        && key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                    // Spawn a key listener task to detect Ctrl+C and Esc keypresses while the model runs.
+                    let cancel_token = CancellationToken::new();
+                    let cancel_token_clone = cancel_token.clone();
+                    let key_listener_handle = tokio::spawn(async move {
+                        if let Ok(()) = crossterm::terminal::enable_raw_mode() {
+                            loop {
+                                if let Ok(true) =
+                                    crossterm::event::poll(std::time::Duration::from_millis(50))
+                                {
+                                    if let Ok(crossterm::event::Event::Key(key_event)) =
+                                        crossterm::event::read()
                                     {
-                                        let _ = crossterm::terminal::disable_raw_mode();
-                                        std::process::exit(130);
+                                        if key_event.code == crossterm::event::KeyCode::Esc {
+                                            cancel_token_clone.cancel();
+                                            break;
+                                        }
+                                        if key_event.code == crossterm::event::KeyCode::Char('c')
+                                            && key_event
+                                                .modifiers
+                                                .contains(crossterm::event::KeyModifiers::CONTROL)
+                                        {
+                                            let _ = crossterm::terminal::disable_raw_mode();
+                                            std::process::exit(130);
+                                        }
                                     }
                                 }
+                                if cancel_token_clone.is_cancelled() {
+                                    break;
+                                }
                             }
-                            if cancel_token_clone.is_cancelled() {
-                                break;
-                            }
+                            let _ = crossterm::terminal::disable_raw_mode();
                         }
-                        let _ = crossterm::terminal::disable_raw_mode();
-                    }
-                });
+                    });
 
-                let response = loop {
-                    match TOOL_LOOP_COST_TRACKING_CONTEXT
-                        .scope(
-                            cost_tracking_context.clone(),
-                            run_tool_call_loop(
-                                model_provider.as_ref(),
-                                &mut history,
-                                &tools_registry,
-                                observer.as_ref(),
-                                &provider_name,
-                                &model_name,
-                                turn_temperature,
-                                true,
-                                approval_manager.as_deref(),
-                                channel_name,
-                                None,
-                                &config.multimodal,
-                                agent.max_tool_iterations,
-                                Some(cancel_token.clone()),
-                                Some(delta_tx.clone()),
-                                None,
-                                &excluded_tools,
-                                &agent.tool_call_dedup_exempt,
-                                activated_handle.as_ref(),
-                                Some(model_switch_callback.clone()),
-                                &config.pacing,
-                                agent.strict_tool_parsing,
-                                agent.max_tool_result_chars,
-                                agent.max_context_tokens,
-                                None, // shared_budget
-                                None, // channel: interactive CLI — uses prompt_cli
-                                None, // receipt_generator
-                                None, // collected_receipts
-                            ),
-                        )
-                        .await
-                    {
-                        Ok(resp) => break resp,
-                        Err(e) => {
-                            if is_tool_loop_cancelled(&e) {
-                                eprintln!("\n\x1b[2m(cancelled)\x1b[0m");
-                                break String::new();
-                            }
-                            if let Some((new_model_provider, new_model)) =
-                                is_model_switch_requested(&e)
-                            {
-                                ::zeroclaw_log::record!(
-                                    INFO,
-                                    ::zeroclaw_log::Event::new(
-                                        module_path!(),
-                                        ::zeroclaw_log::Action::Note
-                                    ),
-                                    &format!(
-                                        "Model switch requested, switching from {} {} to {} {}",
-                                        provider_name, model_name, new_model_provider, new_model
-                                    )
-                                );
+                    let response = loop {
+                        match TOOL_LOOP_COST_TRACKING_CONTEXT
+                            .scope(
+                                cost_tracking_context.clone(),
+                                run_tool_call_loop(
+                                    model_provider.as_ref(),
+                                    &mut history,
+                                    &tools_registry,
+                                    observer.as_ref(),
+                                    &provider_name,
+                                    &model_name,
+                                    turn_temperature,
+                                    true,
+                                    approval_manager.as_deref(),
+                                    channel_name,
+                                    None,
+                                    &config.multimodal,
+                                    agent.max_tool_iterations,
+                                    Some(cancel_token.clone()),
+                                    Some(delta_tx.clone()),
+                                    None,
+                                    &excluded_tools,
+                                    &agent.tool_call_dedup_exempt,
+                                    activated_handle.as_ref(),
+                                    Some(model_switch_callback.clone()),
+                                    &config.pacing,
+                                    agent.strict_tool_parsing,
+                                    agent.max_tool_result_chars,
+                                    agent.max_context_tokens,
+                                    None, // shared_budget
+                                    None, // channel: interactive CLI — uses prompt_cli
+                                    None, // receipt_generator
+                                    None, // collected_receipts
+                                ),
+                            )
+                            .await
+                        {
+                            Ok(resp) => break resp,
+                            Err(e) => {
+                                if is_tool_loop_cancelled(&e) {
+                                    eprintln!("\n\x1b[2m(cancelled)\x1b[0m");
+                                    break String::new();
+                                }
+                                if let Some((new_model_provider, new_model)) =
+                                    is_model_switch_requested(&e)
+                                {
+                                    ::zeroclaw_log::record!(
+                                        INFO,
+                                        ::zeroclaw_log::Event::new(
+                                            module_path!(),
+                                            ::zeroclaw_log::Action::Note
+                                        ),
+                                        &format!(
+                                            "Model switch requested, switching from {} {} to {} {}",
+                                            provider_name,
+                                            model_name,
+                                            new_model_provider,
+                                            new_model
+                                        )
+                                    );
 
-                                model_provider =
+                                    model_provider =
                                     zeroclaw_providers::create_routed_model_provider_with_options(
                                         &config,
                                         &new_model_provider,
@@ -4784,202 +5013,236 @@ pub async fn run(
                                         &provider_runtime_options,
                                     )?;
 
-                                provider_name = new_model_provider;
-                                model_name = new_model;
+                                    provider_name = new_model_provider;
+                                    model_name = new_model;
 
-                                clear_model_switch_request();
+                                    clear_model_switch_request();
 
-                                observer.record_event(&ObserverEvent::AgentStart {
-                                    model_provider: provider_name.to_string(),
-                                    model: model_name.to_string(),
-                                });
+                                    observer.record_event(&ObserverEvent::AgentStart {
+                                        model_provider: provider_name.to_string(),
+                                        model: model_name.to_string(),
+                                    });
 
-                                continue;
+                                    continue;
+                                }
+                                // Context overflow recovery: compress and retry
+                                if zeroclaw_providers::reliable::is_context_window_exceeded(&e) {
+                                    ::zeroclaw_log::record!(
+                                        WARN,
+                                        ::zeroclaw_log::Event::new(
+                                            module_path!(),
+                                            ::zeroclaw_log::Action::Note
+                                        )
+                                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                        "Context overflow in interactive loop, attempting recovery"
+                                    );
+                                    let mut compressor =
+                                        crate::agent::context_compressor::ContextCompressor::new(
+                                            agent.context_compression.clone(),
+                                            agent.max_context_tokens,
+                                        )
+                                        .with_memory(mem.clone());
+                                    let error_msg = format!("{e}");
+                                    match compressor
+                                        .compress_on_error(
+                                            &mut history,
+                                            model_provider.as_ref(),
+                                            &model_name,
+                                            temperature,
+                                            &error_msg,
+                                        )
+                                        .await
+                                    {
+                                        Ok(true) => {
+                                            ::zeroclaw_log::record!(
+                                                INFO,
+                                                ::zeroclaw_log::Event::new(
+                                                    module_path!(),
+                                                    ::zeroclaw_log::Action::Note
+                                                ),
+                                                "Context recovered via compression, retrying turn"
+                                            );
+                                            continue;
+                                        }
+                                        Ok(false) => {
+                                            ::zeroclaw_log::record!(
+                                                WARN,
+                                                ::zeroclaw_log::Event::new(
+                                                    module_path!(),
+                                                    ::zeroclaw_log::Action::Note
+                                                )
+                                                .with_outcome(
+                                                    ::zeroclaw_log::EventOutcome::Unknown
+                                                ),
+                                                "Compression ran but couldn't reduce enough"
+                                            );
+                                        }
+                                        Err(compress_err) => {
+                                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": format!("{}", compress_err)})), "Compression failed during recovery");
+                                        }
+                                    }
+                                }
+
+                                eprintln!("\nError: {e}\n");
+                                break String::new();
                             }
-                            // Context overflow recovery: compress and retry
-                            if zeroclaw_providers::reliable::is_context_window_exceeded(&e) {
-                                ::zeroclaw_log::record!(
-                                    WARN,
-                                    ::zeroclaw_log::Event::new(
-                                        module_path!(),
-                                        ::zeroclaw_log::Action::Note
-                                    )
-                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
-                                    "Context overflow in interactive loop, attempting recovery"
-                                );
-                                let mut compressor =
-                                    crate::agent::context_compressor::ContextCompressor::new(
-                                        agent.context_compression.clone(),
-                                        agent.max_context_tokens,
-                                    )
-                                    .with_memory(mem.clone());
-                                let error_msg = format!("{e}");
-                                match compressor
-                                    .compress_on_error(
-                                        &mut history,
-                                        model_provider.as_ref(),
-                                        &model_name,
-                                        temperature,
-                                        &error_msg,
-                                    )
-                                    .await
-                                {
-                                    Ok(true) => {
-                                        ::zeroclaw_log::record!(
-                                            INFO,
-                                            ::zeroclaw_log::Event::new(
-                                                module_path!(),
-                                                ::zeroclaw_log::Action::Note
-                                            ),
-                                            "Context recovered via compression, retrying turn"
-                                        );
-                                        continue;
-                                    }
-                                    Ok(false) => {
-                                        ::zeroclaw_log::record!(
-                                            WARN,
-                                            ::zeroclaw_log::Event::new(
-                                                module_path!(),
-                                                ::zeroclaw_log::Action::Note
-                                            )
-                                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
-                                            "Compression ran but couldn't reduce enough"
-                                        );
-                                    }
-                                    Err(compress_err) => {
-                                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": format!("{}", compress_err)})), "Compression failed during recovery");
+                        }
+                    };
+
+                    // Clean up: stop the key listener and flush streaming events.
+                    key_listener_handle.abort();
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    drop(delta_tx);
+                    let _ = consumer_handle.await;
+
+                    final_output = response.clone();
+                    if content_was_streamed.load(std::sync::atomic::Ordering::Relaxed) {
+                        println!();
+                    } else if let Err(e) = zeroclaw_api::channel::Channel::send(
+                        &*cli,
+                        &zeroclaw_api::channel::SendMessage::new(format!("\n{response}\n"), "user"),
+                    )
+                    .await
+                    {
+                        eprintln!("\nError sending CLI response: {e}\n");
+                    }
+                    observer.record_event(&ObserverEvent::TurnComplete);
+
+                    // Skill self-improvement
+                    if config.skills.skill_improvement.enabled {
+                        let tool_calls =
+                            crate::skills::creator::extract_tool_calls_from_history(&history);
+                        let mut used_skills = Vec::new();
+                        for call in &tool_calls {
+                            for skill in &skills {
+                                if skill.tools.iter().any(|t| t.name == call.name) {
+                                    if !used_skills.contains(&skill.name) {
+                                        used_skills.push(skill.name.clone());
                                     }
                                 }
                             }
-
-                            eprintln!("\nError: {e}\n");
-                            break String::new();
                         }
-                    }
-                };
 
-                // Clean up: stop the key listener and flush streaming events.
-                key_listener_handle.abort();
-                let _ = crossterm::terminal::disable_raw_mode();
-                drop(delta_tx);
-                let _ = consumer_handle.await;
+                        if !used_skills.is_empty() {
+                            let mut improver = crate::skills::improver::SkillImprover::new(
+                                config.data_dir.clone(),
+                                config.skills.skill_improvement.clone(),
+                            );
 
-                final_output = response.clone();
-                if content_was_streamed.load(std::sync::atomic::Ordering::Relaxed) {
-                    println!();
-                } else if let Err(e) = zeroclaw_api::channel::Channel::send(
-                    &*cli,
-                    &zeroclaw_api::channel::SendMessage::new(format!("\n{response}\n"), "user"),
-                )
-                .await
-                {
-                    eprintln!("\nError sending CLI response: {e}\n");
-                }
-                observer.record_event(&ObserverEvent::TurnComplete);
-
-                // Skill self-improvement
-                if config.skills.skill_improvement.enabled {
-                    let tool_calls = crate::skills::creator::extract_tool_calls_from_history(&history);
-                    let mut used_skills = Vec::new();
-                    for call in &tool_calls {
-                        for skill in &skills {
-                            if skill.tools.iter().any(|t| t.name == call.name) {
-                                if !used_skills.contains(&skill.name) {
-                                    used_skills.push(skill.name.clone());
-                                }
-                            }
-                        }
-                    }
-
-                    if !used_skills.is_empty() {
-                        let mut improver = crate::skills::improver::SkillImprover::new(
-                            config.data_dir.clone(),
-                            config.skills.skill_improvement.clone(),
-                        );
-
-                        for slug in used_skills {
-                            if improver.should_improve_skill(&slug) {
-                                println!(
-                                    "  {} Analyzing skill '{}' for self-improvement...",
-                                    console::style("⚙").cyan().bold(),
-                                    slug
-                                );
-                                let skill_dir = config.data_dir.join("skills").join(&slug);
-                                let toml_path = skill_dir.join("SKILL.toml");
-                                if toml_path.exists() {
-                                    if let Ok(current_content) = std::fs::read_to_string(&toml_path) {
-                                        let system_msg = r#"You are an AI that optimizes Skill configuration files (SKILL.toml).
+                            for slug in used_skills {
+                                if improver.should_improve_skill(&slug) {
+                                    println!(
+                                        "  {} Analyzing skill '{}' for self-improvement...",
+                                        console::style("⚙").cyan().bold(),
+                                        slug
+                                    );
+                                    let skill_dir = config.data_dir.join("skills").join(&slug);
+                                    let toml_path = skill_dir.join("SKILL.toml");
+                                    if toml_path.exists() {
+                                        if let Ok(current_content) =
+                                            std::fs::read_to_string(&toml_path)
+                                        {
+                                            let system_msg = r#"You are an AI that optimizes Skill configuration files (SKILL.toml).
 Analyze the provided conversation history where the agent executed tools from the skill.
 Identify any deficiencies in the tool definitions, descriptions, or parameters, or potential enhancements to the skill's metadata.
 Provide the updated, complete SKILL.toml content.
 Your response MUST contain the complete, valid updated SKILL.toml file inside a single ```toml code block.
 After the code block, write a brief explanation (one line) of the improvement starting with "REASON: "."#;
 
-                                        let mut history_text = String::new();
-                                        for msg in &history {
-                                            let _ = writeln!(history_text, "{}: {}", msg.role, msg.content);
-                                        }
+                                            let mut history_text = String::new();
+                                            for msg in &history {
+                                                let _ = writeln!(
+                                                    history_text,
+                                                    "{}: {}",
+                                                    msg.role, msg.content
+                                                );
+                                            }
 
-                                        let user_msg = format!(
-                                            "Current SKILL.toml:\n```toml\n{}\n```\n\nExecution history:\n{}",
-                                            current_content,
-                                            history_text
-                                        );
+                                            let user_msg = format!(
+                                                "Current SKILL.toml:\n```toml\n{}\n```\n\nExecution history:\n{}",
+                                                current_content, history_text
+                                            );
 
-                                        match model_provider.chat_with_system(
-                                            Some(system_msg),
-                                            &user_msg,
-                                            &model_name,
-                                            temperature,
-                                        ).await {
-                                            Ok(llm_res) => {
-                                                let mut improved_content = String::new();
-                                                if let Some(start) = llm_res.find("```toml") {
-                                                    let rest = &llm_res[start + 7..];
-                                                    if let Some(end) = rest.find("```") {
-                                                        improved_content = rest[..end].trim().to_string();
-                                                    }
-                                                } else if let Some(start) = llm_res.find("```") {
-                                                    let rest = &llm_res[start + 3..];
-                                                    if let Some(end) = rest.find("```") {
-                                                        improved_content = rest[..end].trim().to_string();
-                                                    }
-                                                }
-
-                                                let reason = llm_res.lines()
-                                                    .find(|l| l.trim().starts_with("REASON:"))
-                                                    .map(|l| l.trim().strip_prefix("REASON:").unwrap_or(l).trim().to_string())
-                                                    .unwrap_or_else(|| "Self-improved via agent feedback".to_string());
-
-                                                if !improved_content.is_empty() {
-                                                    match improver.improve_skill(&slug, &improved_content, &reason).await {
-                                                        Ok(Some(_)) => {
-                                                            println!(
-                                                                "  {} Improved skill '{}' successfully! Reason: {}",
-                                                                console::style("✦").green().bold(),
-                                                                slug,
-                                                                console::style(&reason).dim()
-                                                            );
+                                            match model_provider
+                                                .chat_with_system(
+                                                    Some(system_msg),
+                                                    &user_msg,
+                                                    &model_name,
+                                                    temperature,
+                                                )
+                                                .await
+                                            {
+                                                Ok(llm_res) => {
+                                                    let mut improved_content = String::new();
+                                                    if let Some(start) = llm_res.find("```toml") {
+                                                        let rest = &llm_res[start + 7..];
+                                                        if let Some(end) = rest.find("```") {
+                                                            improved_content =
+                                                                rest[..end].trim().to_string();
                                                         }
-                                                        Ok(None) => {}
-                                                        Err(e) => {
-                                                            ::zeroclaw_log::record!(
+                                                    } else if let Some(start) = llm_res.find("```")
+                                                    {
+                                                        let rest = &llm_res[start + 3..];
+                                                        if let Some(end) = rest.find("```") {
+                                                            improved_content =
+                                                                rest[..end].trim().to_string();
+                                                        }
+                                                    }
+
+                                                    let reason = llm_res
+                                                        .lines()
+                                                        .find(|l| l.trim().starts_with("REASON:"))
+                                                        .map(|l| {
+                                                            l.trim()
+                                                                .strip_prefix("REASON:")
+                                                                .unwrap_or(l)
+                                                                .trim()
+                                                                .to_string()
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            "Self-improved via agent feedback"
+                                                                .to_string()
+                                                        });
+
+                                                    if !improved_content.is_empty() {
+                                                        match improver
+                                                            .improve_skill(
+                                                                &slug,
+                                                                &improved_content,
+                                                                &reason,
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(Some(_)) => {
+                                                                println!(
+                                                                    "  {} Improved skill '{}' successfully! Reason: {}",
+                                                                    console::style("✦")
+                                                                        .green()
+                                                                        .bold(),
+                                                                    slug,
+                                                                    console::style(&reason).dim()
+                                                                );
+                                                            }
+                                                            Ok(None) => {}
+                                                            Err(e) => {
+                                                                ::zeroclaw_log::record!(
                                                                 WARN,
                                                                 ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                                                                     .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
                                                                 "Skill improvement validation failed"
                                                             );
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
-                                            Err(e) => {
-                                                ::zeroclaw_log::record!(
+                                                Err(e) => {
+                                                    ::zeroclaw_log::record!(
                                                     WARN,
                                                     ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                                                         .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
                                                     "Failed to query model for skill improvement"
                                                 );
+                                                }
                                             }
                                         }
                                     }
@@ -4987,59 +5250,58 @@ After the code block, write a brief explanation (one line) of the improvement st
                             }
                         }
                     }
-                }
 
-                // Context compression before hard trimming to preserve long-context signal.
-                {
-                    let compressor = crate::agent::context_compressor::ContextCompressor::new(
-                        agent.context_compression.clone(),
-                        agent.max_context_tokens,
-                    )
-                    .with_memory(mem.clone());
-                    match compressor
-                        .compress_if_needed(
-                            &mut history,
-                            model_provider.as_ref(),
-                            &model_name,
-                            temperature,
-                        )
-                        .await
+                    // Context compression before hard trimming to preserve long-context signal.
                     {
-                        Ok(result) if result.compressed => {
-                            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"passes": result.passes_used, "before": result.tokens_before, "after": result.tokens_after})), "Context compression complete");
-                        }
-                        Ok(_) => {} // No compression needed
-                        Err(e) => {
-                            ::zeroclaw_log::record!(
-                                WARN,
-                                ::zeroclaw_log::Event::new(
-                                    module_path!(),
-                                    ::zeroclaw_log::Action::Note
-                                )
-                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
-                                .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
-                                "Context compression failed, falling back to history trim"
-                            );
-                            trim_history(&mut history, agent.max_history_messages / 2);
+                        let compressor = crate::agent::context_compressor::ContextCompressor::new(
+                            agent.context_compression.clone(),
+                            agent.max_context_tokens,
+                        )
+                        .with_memory(mem.clone());
+                        match compressor
+                            .compress_if_needed(
+                                &mut history,
+                                model_provider.as_ref(),
+                                &model_name,
+                                temperature,
+                            )
+                            .await
+                        {
+                            Ok(result) if result.compressed => {
+                                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"passes": result.passes_used, "before": result.tokens_before, "after": result.tokens_after})), "Context compression complete");
+                            }
+                            Ok(_) => {} // No compression needed
+                            Err(e) => {
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                    .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
+                                    "Context compression failed, falling back to history trim"
+                                );
+                                trim_history(&mut history, agent.max_history_messages / 2);
+                            }
                         }
                     }
-                }
 
-                // Hard cap as a safety net.
-                trim_history(&mut history, agent.max_history_messages);
+                    // Hard cap as a safety net.
+                    trim_history(&mut history, agent.max_history_messages);
 
-                // Restore base system prompt (remove per-turn thinking prefix).
-                if thinking_params.system_prompt_prefix.is_some()
-                    && let Some(sys_msg) = history.first_mut()
-                    && sys_msg.role == "system"
-                {
-                    sys_msg.content.clone_from(&base_system_prompt);
-                }
+                    // Restore base system prompt (remove per-turn thinking prefix).
+                    if thinking_params.system_prompt_prefix.is_some()
+                        && let Some(sys_msg) = history.first_mut()
+                        && sys_msg.role == "system"
+                    {
+                        sys_msg.content.clone_from(&base_system_prompt);
+                    }
 
-                if let Some(path) = session_state_file.as_deref() {
-                    save_interactive_session_history(path, &history)?;
+                    if let Some(path) = session_state_file.as_deref() {
+                        save_interactive_session_history(path, &history)?;
+                    }
                 }
-            }
             }
         }
 
@@ -5055,12 +5317,14 @@ After the code block, write a brief explanation (one line) of the improvement st
         Ok(final_output)
     };
     let sender = overrides.tui_sender.clone();
-    TUI_SENDER.scope(sender, async move {
-        __zc_body
-            .instrument(__zc_scope_span)
-            .instrument(__zc_attribution_span)
-            .await
-    }).await
+    TUI_SENDER
+        .scope(sender, async move {
+            __zc_body
+                .instrument(__zc_scope_span)
+                .instrument(__zc_attribution_span)
+                .await
+        })
+        .await
 }
 
 /// Process a single message through the full agent (with tools, peripherals, memory).
@@ -5570,27 +5834,56 @@ pub async fn process_message(
 
 fn format_premium_status(text: &str) -> String {
     let trimmed = text.trim();
-    if trimmed.starts_with('\u{1f4ac}') { // 💬
+    if trimmed.starts_with('\u{1f4ac}') {
+        // 💬
         let content = trimmed.strip_prefix('\u{1f4ac}').unwrap_or(trimmed).trim();
-        format!("  {} {}\n", console::style("✦").cyan().bold(), console::style(content).cyan())
-    } else if trimmed.starts_with('\u{23f3}') { // ⏳
+        format!(
+            "  {} {}\n",
+            console::style("✦").cyan().bold(),
+            console::style(content).cyan()
+        )
+    } else if trimmed.starts_with('\u{23f3}') {
+        // ⏳
         let content = trimmed.strip_prefix('\u{23f3}').unwrap_or(trimmed).trim();
-        format!("  {} Running {}...\n", console::style("⚙").yellow().bold(), console::style(content).yellow())
-    } else if trimmed.starts_with('\u{2705}') { // ✅
+        format!(
+            "  {} Running {}...\n",
+            console::style("⚙").yellow().bold(),
+            console::style(content).yellow()
+        )
+    } else if trimmed.starts_with('\u{2705}') {
+        // ✅
         let content = trimmed.strip_prefix('\u{2705}').unwrap_or(trimmed).trim();
-        format!("  {} Completed {}\n", console::style("✦").green().bold(), console::style(content).green())
-    } else if trimmed.starts_with('\u{274c}') { // ❌
+        format!(
+            "  {} Completed {}\n",
+            console::style("✦").green().bold(),
+            console::style(content).green()
+        )
+    } else if trimmed.starts_with('\u{274c}') {
+        // ❌
         let content = trimmed.strip_prefix('\u{274c}').unwrap_or(trimmed).trim();
-        format!("  {} {}\n", console::style("✗").red().bold(), console::style(content).red())
+        format!(
+            "  {} {}\n",
+            console::style("✗").red().bold(),
+            console::style(content).red()
+        )
     } else {
-        format!("  {} {}\n", console::style("⚙").dim(), console::style(trimmed).dim())
+        format!(
+            "  {} {}\n",
+            console::style("⚙").dim(),
+            console::style(trimmed).dim()
+        )
     }
 }
 
 async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
-    use dialoguer::{Password, Select, Input};
+    use dialoguer::{Input, Password, Select};
 
-    println!("{}", console::style("=== openz Configuration Setup ===").cyan().bold());
+    println!(
+        "{}",
+        console::style("=== openz Configuration Setup ===")
+            .cyan()
+            .bold()
+    );
     println!("This will set up your model provider and default agent.");
     println!();
 
@@ -5603,7 +5896,7 @@ async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
         "ollama",
         "openrouter",
         "lmstudio",
-        "Other"
+        "Other",
     ];
 
     let selection = Select::new()
@@ -5624,9 +5917,7 @@ async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
     let needs_key = !matches!(picked.as_str(), "ollama" | "lmstudio");
 
     let api_key = if needs_key {
-        let key: String = Password::new()
-            .with_prompt("Enter API Key")
-            .interact()?;
+        let key: String = Password::new().with_prompt("Enter API Key").interact()?;
         key.trim().to_string()
     } else {
         String::new()
@@ -5640,7 +5931,7 @@ async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
         "deepseek" => "deepseek-chat",
         "ollama" => "llama3",
         "lmstudio" => "model-id",
-        _ => "model-id"
+        _ => "model-id",
     };
 
     let model: String = Input::new()
@@ -5661,23 +5952,36 @@ async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
     if config.risk_profiles.get("default").is_none() {
         let mut default_profile = zeroclaw_config::schema::RiskProfileConfig::default();
         default_profile.ensure_default_auto_approve();
-        config.risk_profiles.insert("default".to_string(), default_profile);
+        config
+            .risk_profiles
+            .insert("default".to_string(), default_profile);
         config.mark_dirty("risk_profiles.default");
     }
 
     if config.runtime_profiles.get("default").is_none() {
-        config.runtime_profiles.insert("default".to_string(), zeroclaw_config::schema::RuntimeProfileConfig::default());
+        config.runtime_profiles.insert(
+            "default".to_string(),
+            zeroclaw_config::schema::RuntimeProfileConfig::default(),
+        );
         config.mark_dirty("runtime_profiles.default");
     }
 
     let agent_prefix = "agents.assistant";
-    config.set_prop_persistent(&format!("{agent_prefix}.model_provider"), &format!("{picked}.{alias}"))?;
+    config.set_prop_persistent(
+        &format!("{agent_prefix}.model_provider"),
+        &format!("{picked}.{alias}"),
+    )?;
     config.set_prop_persistent(&format!("{agent_prefix}.risk_profile"), "default")?;
     config.set_prop_persistent(&format!("{agent_prefix}.runtime_profile"), "default")?;
 
     config.save_dirty().await?;
     println!();
-    println!("{}", console::style("✓ Configuration saved successfully!").green().bold());
+    println!(
+        "{}",
+        console::style("✓ Configuration saved successfully!")
+            .green()
+            .bold()
+    );
     println!("Config file: {}", config.config_path.display());
     println!();
 
@@ -5685,7 +5989,9 @@ async fn run_configure_wizard_inline(config: &mut Config) -> Result<()> {
 }
 
 fn print_last_logs(config: &Config) -> Result<()> {
-    let log_path = config.config_path.parent()
+    let log_path = config
+        .config_path
+        .parent()
         .context("Failed to get config path parent")?
         .join("state/runtime-trace.jsonl");
 

@@ -393,12 +393,17 @@ fn run_specialized_agent<'a>(
         }
 
         // Find primary agent's model provider and fallbacks if configured
-        let primary_cfg = config.agents.get("agentz")
+        let primary_cfg = config
+            .agents
+            .get("agentz")
             .or_else(|| config.agents.get("oh-my-openagent"))
             .cloned();
 
         let (resolved_default_provider, primary_fallbacks) = if let Some(p_cfg) = &primary_cfg {
-            (p_cfg.model_provider.as_str().to_string(), p_cfg.model_fallbacks.clone())
+            (
+                p_cfg.model_provider.as_str().to_string(),
+                p_cfg.model_fallbacks.clone(),
+            )
         } else {
             (default_model_provider, vec![])
         };
@@ -577,11 +582,14 @@ fn run_research_agent<'a>(
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn run_planner_agent<'a>(
     config: &'a Config,
     agents_dir: &'a Path,
     prompt: &'a str,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, String, String, String)>> + Send + 'a>> {
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(String, String, String, String)>> + Send + 'a>,
+> {
     Box::pin(async move {
         let raw_out = run_specialized_agent(
             config,
@@ -733,6 +741,7 @@ fn run_planner_agent_summary<'a>(
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn run_primary_evaluation<'a>(
     config: &'a Config,
     agents_dir: &'a Path,

@@ -3721,50 +3721,17 @@ impl Default for McpConfig {
     fn default() -> Self {
         let mut servers = Vec::new();
 
-        // 1. hermes (always enabled)
-        servers.push(McpServerConfig {
-            name: "hermes".to_string(),
-            transport: McpTransport::Stdio,
-            command: "hermes".to_string(),
-            args: vec!["mcp".to_string(), "serve".to_string()],
-            enabled: true,
-            ..Default::default()
-        });
-
-        // 2. crush (always enabled)
-        servers.push(McpServerConfig {
-            name: "crush".to_string(),
-            transport: McpTransport::Stdio,
-            command: "crush".to_string(),
-            args: vec!["mcp".to_string(), "serve".to_string()],
-            enabled: true,
-            ..Default::default()
-        });
-
-        // 3. opencode (always enabled)
-        servers.push(McpServerConfig {
-            name: "opencode".to_string(),
-            transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "opencode-mcp".to_string()],
-            enabled: true,
-            ..Default::default()
-        });
-
-        // 4. fetch (always enabled)
+        // 1. fetch (always enabled)
         servers.push(McpServerConfig {
             name: "fetch".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-fetch".to_string(),
-            ],
+            command: "uvx".to_string(),
+            args: vec!["mcp-server-fetch".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 5. github (disabled by default)
+        // 2. github (disabled by default)
         let mut github_env = HashMap::new();
         github_env.insert("GITHUB_TOKEN".to_string(), "".to_string());
         servers.push(McpServerConfig {
@@ -3780,7 +3747,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 6. brave-search (disabled by default)
+        // 3. brave-search (disabled by default)
         let mut brave_env = HashMap::new();
         brave_env.insert("BRAVE_API_KEY".to_string(), "".to_string());
         servers.push(McpServerConfig {
@@ -3796,7 +3763,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 7. puppeteer (always enabled)
+        // 4. puppeteer (always enabled)
         servers.push(McpServerConfig {
             name: "puppeteer".to_string(),
             transport: McpTransport::Stdio,
@@ -3809,7 +3776,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 8. memory (always enabled)
+        // 5. memory (always enabled)
         servers.push(McpServerConfig {
             name: "memory".to_string(),
             transport: McpTransport::Stdio,
@@ -3822,20 +3789,17 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 9. sqlite (always enabled)
+        // 6. sqlite (always enabled)
         servers.push(McpServerConfig {
             name: "sqlite".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-sqlite".to_string(),
-            ],
+            command: "uvx".to_string(),
+            args: vec!["mcp-server-sqlite".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 10. filesystem (always enabled, default-pointing to current workspace)
+        // 7. filesystem (always enabled, default-pointing to current workspace)
         servers.push(McpServerConfig {
             name: "filesystem".to_string(),
             transport: McpTransport::Stdio,
@@ -3849,46 +3813,37 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 11. git (always enabled)
+        // 8. git (always enabled)
         servers.push(McpServerConfig {
             name: "git".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-git".to_string(),
-            ],
+            command: "uvx".to_string(),
+            args: vec!["mcp-server-git".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 12. dns (always enabled)
+        // 9. dns (always enabled)
         servers.push(McpServerConfig {
             name: "dns".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-dns".to_string(),
-            ],
+            command: "uvx".to_string(),
+            args: vec!["mcp-server-dns".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 13. wikipedia (always enabled)
+        // 10. wikipedia (always enabled)
         servers.push(McpServerConfig {
             name: "wikipedia".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-wikipedia".to_string(),
-            ],
+            command: "uvx".to_string(),
+            args: vec!["wikipedia-mcp".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 14. pulsemcp (always enabled)
+        // 11. pulsemcp (always enabled)
         servers.push(McpServerConfig {
             name: "pulsemcp".to_string(),
             transport: McpTransport::Stdio,
@@ -3898,20 +3853,17 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 15. time (always enabled)
+        // 12. time (always enabled)
         servers.push(McpServerConfig {
             name: "time".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-time".to_string(),
-            ],
+            command: "uvx".to_string(),
+            args: vec!["mcp-server-time".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 16. sequential-thinking (always enabled)
+        // 13. sequential-thinking (always enabled)
         servers.push(McpServerConfig {
             name: "sequential-thinking".to_string(),
             transport: McpTransport::Stdio,
@@ -3924,7 +3876,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 17. ripgrep (always enabled)
+        // 14. ripgrep (always enabled)
         servers.push(McpServerConfig {
             name: "ripgrep".to_string(),
             transport: McpTransport::Stdio,
@@ -3934,7 +3886,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 18. fd (always enabled)
+        // 15. fd (always enabled)
         servers.push(McpServerConfig {
             name: "fd".to_string(),
             transport: McpTransport::Stdio,
@@ -3944,7 +3896,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 19. ast-grep (always enabled)
+        // 16. ast-grep (always enabled)
         servers.push(McpServerConfig {
             name: "ast-grep".to_string(),
             transport: McpTransport::Stdio,
@@ -3958,7 +3910,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 20. tree-sitter (always enabled)
+        // 17. tree-sitter (always enabled)
         servers.push(McpServerConfig {
             name: "tree-sitter".to_string(),
             transport: McpTransport::Stdio,
@@ -3972,7 +3924,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 21. playwright (always enabled)
+        // 18. playwright (always enabled)
         servers.push(McpServerConfig {
             name: "playwright".to_string(),
             transport: McpTransport::Stdio,
@@ -3982,7 +3934,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 22. repomix (always enabled)
+        // 19. repomix (always enabled)
         servers.push(McpServerConfig {
             name: "repomix".to_string(),
             transport: McpTransport::Stdio,
@@ -3992,7 +3944,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 23. chromadb (always enabled)
+        // 20. chromadb (always enabled)
         servers.push(McpServerConfig {
             name: "chromadb".to_string(),
             transport: McpTransport::Stdio,
@@ -4002,7 +3954,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 24. docker (always enabled)
+        // 21. docker (always enabled)
         servers.push(McpServerConfig {
             name: "docker".to_string(),
             transport: McpTransport::Stdio,
@@ -4012,7 +3964,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 25. duckduckgo (always enabled)
+        // 22. duckduckgo (always enabled)
         servers.push(McpServerConfig {
             name: "duckduckgo".to_string(),
             transport: McpTransport::Stdio,
@@ -4022,17 +3974,17 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 26. duckdb (always enabled)
+        // 23. duckdb (always enabled)
         servers.push(McpServerConfig {
             name: "duckdb".to_string(),
             transport: McpTransport::Stdio,
             command: "npx".to_string(),
-            args: vec!["-y".to_string(), "duckdb-mcp-native".to_string()],
+            args: vec!["-y".to_string(), "@seed-ship/duckdb-mcp-native".to_string()],
             enabled: true,
             ..Default::default()
         });
 
-        // 27. firecrawl (disabled by default)
+        // 24. firecrawl (disabled by default)
         let mut firecrawl_env = HashMap::new();
         firecrawl_env.insert("FIRECRAWL_API_KEY".to_string(), "".to_string());
         servers.push(McpServerConfig {
@@ -4045,7 +3997,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 28. tavily (disabled by default)
+        // 25. tavily (disabled by default)
         let mut tavily_env = HashMap::new();
         tavily_env.insert("TAVILY_API_KEY".to_string(), "".to_string());
         servers.push(McpServerConfig {
@@ -4058,7 +4010,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 29. exa (disabled by default)
+        // 26. exa (disabled by default)
         let mut exa_env = HashMap::new();
         exa_env.insert("EXA_API_KEY".to_string(), "".to_string());
         servers.push(McpServerConfig {
@@ -4071,7 +4023,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 30. context7 (disabled by default)
+        // 27. context7 (disabled by default)
         let mut context7_env = HashMap::new();
         context7_env.insert("CONTEXT7_API_KEY".to_string(), "".to_string());
         servers.push(McpServerConfig {
