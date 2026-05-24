@@ -3827,8 +3827,11 @@ impl Default for McpConfig {
         servers.push(McpServerConfig {
             name: "dns".to_string(),
             transport: McpTransport::Stdio,
-            command: "uvx".to_string(),
-            args: vec!["mcp-server-dns".to_string()],
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@cenemiljezweb/dns-mcp-server".to_string(),
+            ],
             enabled: true,
             ..Default::default()
         });
@@ -3910,7 +3913,7 @@ impl Default for McpConfig {
             ..Default::default()
         });
 
-        // 17. tree-sitter (always enabled)
+        // 17. tree-sitter (disabled by default due to native build compatibility)
         servers.push(McpServerConfig {
             name: "tree-sitter".to_string(),
             transport: McpTransport::Stdio,
@@ -3920,7 +3923,7 @@ impl Default for McpConfig {
                 "@nendo/tree-sitter-mcp".to_string(),
                 "--mcp".to_string(),
             ],
-            enabled: true,
+            enabled: false,
             ..Default::default()
         });
 
@@ -3978,8 +3981,8 @@ impl Default for McpConfig {
         servers.push(McpServerConfig {
             name: "duckdb".to_string(),
             transport: McpTransport::Stdio,
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "@seed-ship/duckdb-mcp-native".to_string()],
+            command: "uvx".to_string(),
+            args: vec!["duckdb-mcp-server".to_string()],
             enabled: true,
             ..Default::default()
         });
