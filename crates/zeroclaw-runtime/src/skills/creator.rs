@@ -80,6 +80,52 @@ impl SkillCreator {
             .await
             .with_context(|| format!("Failed to write {}", toml_path.display().to_string()))?;
 
+        // Generate SKILL.md using SkillDocument
+        use std::fmt::Write as _;
+        let mut body = String::new();
+        let _ = writeln!(body, "# Playbook: {}", title_from_name(&slug));
+        let _ = writeln!(body);
+        let _ = writeln!(
+            body,
+            "Auto-generated playbook skill created from successful task execution:"
+        );
+        let _ = writeln!(body, "> {task_description}");
+        let _ = writeln!(body);
+        let _ = writeln!(body, "## Executed Tool Calls");
+        let _ = writeln!(body);
+        let _ = writeln!(
+            body,
+            "Here is the sequence of tools called during this execution:"
+        );
+        let _ = writeln!(body);
+        for (i, call) in tool_calls.iter().enumerate() {
+            let _ = writeln!(body, "{}. **{}**", i + 1, call.name);
+            let command = call.args.get("command").and_then(serde_json::Value::as_str);
+            if let Some(cmd) = command {
+                let _ = writeln!(body, "   - Command: `{}`", cmd);
+            } else {
+                let args_str = serde_json::to_string(&call.args).unwrap_or_default();
+                let _ = writeln!(body, "   - Arguments: `{}`", args_str);
+            }
+        }
+
+        let doc = super::document::SkillDocument {
+            frontmatter: super::frontmatter::SkillFrontmatter {
+                name: slug.clone(),
+                description: format!("Auto-generated: {task_description}"),
+                license: None,
+                author: Some("zeroclaw-auto".to_string()),
+                version: Some("0.1.0".to_string()),
+                category: Some("auto-generated".to_string()),
+            },
+            body,
+        };
+        let md_content = doc.serialize();
+        let md_path = skill_dir.join("SKILL.md");
+        tokio::fs::write(&md_path, md_content.as_bytes())
+            .await
+            .with_context(|| format!("Failed to write {}", md_path.display().to_string()))?;
+
         Ok(Some(slug))
     }
 
@@ -270,6 +316,19 @@ fn toml_escape(s: &str) -> String {
         .replace('\r', "\\r")
         .replace('\t', "\\t");
     format!("\"{escaped}\"")
+}
+
+fn title_from_name(name: &str) -> String {
+    name.split('-')
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Extract the description field from a SKILL.toml string.
@@ -776,6 +835,18 @@ tags = ["auto-generated"]
             .unwrap();
         assert!(toml_content.contains("build-and-test"));
         assert!(toml_content.contains("zeroclaw-auto"));
+
+        // Verify the SKILL.md was created and contains expected content.
+        let md_content = tokio::fs::read_to_string(skill_dir.join("SKILL.md"))
+            .await
+            .unwrap();
+        assert!(md_content.contains("name: build-and-test"));
+        assert!(md_content.contains("description: Auto-generated: Build and test"));
+        assert!(md_content.contains("author: zeroclaw-auto"));
+        assert!(md_content.contains("category: auto-generated"));
+        assert!(md_content.contains("# Playbook: Build And Test"));
+        assert!(md_content.contains("Command: `cargo build`"));
+        assert!(md_content.contains("Command: `cargo test`"));
     }
 
     #[tokio::test]

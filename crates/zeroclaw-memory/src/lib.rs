@@ -575,6 +575,22 @@ pub async fn create_memory_for_agent(
     Ok(Arc::new(scoped))
 }
 
+/// Helper: resolve and create the embedding provider for a given agent.
+pub fn create_embedding_provider_for_agent(
+    config: &zeroclaw_config::schema::Config,
+    _agent_alias: &str,
+    api_key: Option<&str>,
+) -> anyhow::Result<Arc<dyn embeddings::EmbeddingProvider>> {
+    let resolved_embedding =
+        resolve_embedding_config(&config.memory, &config.embedding_routes, api_key);
+    Ok(Arc::from(embeddings::create_embedding_provider(
+        &resolved_embedding.model_provider,
+        resolved_embedding.api_key.as_deref(),
+        &resolved_embedding.model,
+        resolved_embedding.dimensions,
+    )))
+}
+
 /// Factory: create an optional response cache from config.
 pub fn create_response_cache(config: &MemoryConfig, workspace_dir: &Path) -> Option<ResponseCache> {
     if !config.response_cache_enabled {

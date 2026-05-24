@@ -1,18 +1,15 @@
+use crate::tui::state::{
+    ActivityState, LspStatus, RuntimeStatus, format_cost, format_git, format_tokens,
+};
 use ratatui::{
+    Frame,
     layout::Rect,
-    style::{Color, Style, Modifier},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
-use crate::tui::state::{RuntimeStatus, ActivityState, LspStatus, format_tokens, format_cost, format_git};
 
-pub fn draw_status_bar(
-    f: &mut Frame,
-    area: Rect,
-    status: &RuntimeStatus,
-    spinner_frame: &str,
-) {
+pub fn draw_status_bar(f: &mut Frame, area: Rect, status: &RuntimeStatus, spinner_frame: &str) {
     let mut spans = Vec::new();
 
     // 1. Spinner & Activity
@@ -21,28 +18,52 @@ pub fn draw_status_bar(
             spans.push(Span::styled("✓ Ready", Style::default().fg(Color::Green)));
         }
         ActivityState::Thinking => {
-            spans.push(Span::styled(format!("{spinner_frame} Thinking..."), Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Thinking..."),
+                Style::default().fg(Color::Cyan),
+            ));
         }
         ActivityState::CallingModel => {
-            spans.push(Span::styled(format!("{spinner_frame} Calling model..."), Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Calling model..."),
+                Style::default().fg(Color::Cyan),
+            ));
         }
         ActivityState::RunningTool(name) => {
-            spans.push(Span::styled(format!("{spinner_frame} Running tool: {name}"), Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Running tool: {name}"),
+                Style::default().fg(Color::Yellow),
+            ));
         }
         ActivityState::RunningMcp(name) => {
-            spans.push(Span::styled(format!("{spinner_frame} Running MCP tool: {name}"), Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Running MCP tool: {name}"),
+                Style::default().fg(Color::Yellow),
+            ));
         }
         ActivityState::IndexingProject => {
-            spans.push(Span::styled(format!("{spinner_frame} Indexing project..."), Style::default().fg(Color::Blue)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Indexing project..."),
+                Style::default().fg(Color::Blue),
+            ));
         }
         ActivityState::WritingFiles => {
-            spans.push(Span::styled(format!("{spinner_frame} Writing files..."), Style::default().fg(Color::Blue)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Writing files..."),
+                Style::default().fg(Color::Blue),
+            ));
         }
         ActivityState::WaitingForResponse => {
-            spans.push(Span::styled(format!("{spinner_frame} Waiting for response..."), Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled(
+                format!("{spinner_frame} Waiting for response..."),
+                Style::default().fg(Color::Cyan),
+            ));
         }
         ActivityState::Error(err) => {
-            spans.push(Span::styled(format!("✗ Error: {err}"), Style::default().fg(Color::Red)));
+            spans.push(Span::styled(
+                format!("✗ Error: {err}"),
+                Style::default().fg(Color::Red),
+            ));
         }
     }
 
@@ -51,7 +72,12 @@ pub fn draw_status_bar(
 
     // 2. Model
     let model = status.active_model.as_deref().unwrap_or("none");
-    spans.push(Span::styled(model, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+    spans.push(Span::styled(
+        model,
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     // Divider
     spans.push(Span::raw(" · "));
@@ -64,7 +90,10 @@ pub fn draw_status_bar(
     spans.push(Span::raw(" · "));
 
     // 4. Cost
-    spans.push(Span::styled(format_cost(status.estimated_cost_usd), Style::default().fg(Color::Green)));
+    spans.push(Span::styled(
+        format_cost(status.estimated_cost_usd),
+        Style::default().fg(Color::Green),
+    ));
 
     // Divider
     spans.push(Span::raw(" · "));

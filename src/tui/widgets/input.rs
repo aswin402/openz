@@ -1,16 +1,11 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
 };
 
-pub fn draw_input(
-    f: &mut Frame,
-    area: Rect,
-    input_text: &str,
-    is_thinking: bool,
-) {
+pub fn draw_input(f: &mut Frame, area: Rect, input_text: &str, is_thinking: bool) {
     let input_style = if is_thinking {
         Style::default().fg(Color::DarkGray)
     } else {

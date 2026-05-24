@@ -1,5 +1,6 @@
 #[allow(clippy::module_inception)]
 pub mod agent;
+pub mod agentz;
 pub mod classifier;
 pub mod context_analyzer;
 pub mod context_compressor;
@@ -10,7 +11,7 @@ pub mod history;
 pub mod history_pruner;
 pub mod loop_;
 pub mod loop_detector;
-pub mod tui;
+pub mod mcp_server;
 pub mod memory_loader;
 pub mod personality;
 pub mod personality_templates;
@@ -19,6 +20,7 @@ pub mod system_prompt;
 pub mod thinking;
 pub mod tool_execution;
 pub mod tool_receipts;
+pub mod tui;
 
 pub(crate) fn is_runtime_approved_arg_tool(tool_name: &str) -> bool {
     matches!(
@@ -62,5 +64,6 @@ pub mod tui_events;
 #[allow(unused_imports)]
 pub use agent::{Agent, AgentBuilder, TurnEvent};
 #[allow(unused_imports)]
-pub use loop_::{process_message, run};
+pub use loop_::{process_message, run, run_boxed};
+pub use mcp_server::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, handle_mcp_request};
 pub use tui_events::{LspStatus, RuntimeEvent};

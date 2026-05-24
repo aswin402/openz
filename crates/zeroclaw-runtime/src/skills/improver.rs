@@ -115,6 +115,52 @@ impl SkillImprover {
                 )
             })?;
 
+        // If SKILL.md exists, keep its frontmatter in sync with improved TOML.
+        let md_path = skill_dir.join("SKILL.md");
+        if md_path.exists() {
+            if let Ok(md_content) = tokio::fs::read_to_string(&md_path).await {
+                if let Ok(mut doc) = super::document::SkillDocument::parse(&md_content) {
+                    #[derive(serde::Deserialize)]
+                    struct Partial {
+                        skill: PartialSkill,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct PartialSkill {
+                        name: Option<String>,
+                        description: Option<String>,
+                        version: Option<String>,
+                        author: Option<String>,
+                    }
+
+                    let toml_portion = strip_trailing_comments(improved_content);
+                    if let Ok(parsed_toml) = toml::from_str::<Partial>(&toml_portion) {
+                        if let Some(new_name) = parsed_toml.skill.name {
+                            doc.frontmatter.name = new_name;
+                        }
+                        if let Some(new_desc) = parsed_toml.skill.description {
+                            doc.frontmatter.description = new_desc;
+                        }
+                        if let Some(new_version) = parsed_toml.skill.version {
+                            doc.frontmatter.version = Some(new_version);
+                        }
+                        if let Some(new_author) = parsed_toml.skill.author {
+                            doc.frontmatter.author = Some(new_author);
+                        }
+
+                        // Write it back atomically.
+                        let md_serialized = doc.serialize();
+                        let temp_md_path = skill_dir.join(".SKILL.md.tmp");
+                        if tokio::fs::write(&temp_md_path, md_serialized.as_bytes())
+                            .await
+                            .is_ok()
+                        {
+                            let _ = tokio::fs::rename(&temp_md_path, &md_path).await;
+                        }
+                    }
+                }
+            }
+        }
+
         // Record cooldown.
         self.cooldowns.insert(slug.to_string(), Instant::now());
 
@@ -462,5 +508,70 @@ name = "test"
         let content = "[skill]\nname = \"test\"\n";
         let trail = extract_audit_trail(content);
         assert!(trail.is_empty());
+    }
+
+    #[tokio::test]
+    async fn improve_skill_syncs_markdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("skills").join("test-skill");
+        tokio::fs::create_dir_all(&skill_dir).await.unwrap();
+
+        let original_toml = r#"[skill]
+name = "test-skill"
+description = "Original description"
+version = "0.1.0"
+author = "zeroclaw-auto"
+tags = ["auto-generated"]
+"#;
+        tokio::fs::write(skill_dir.join("SKILL.toml"), original_toml)
+            .await
+            .unwrap();
+
+        let original_md = r#"---
+name: test-skill
+description: Original description
+version: 0.1.0
+author: zeroclaw-auto
+---
+# Original Body
+"#;
+        tokio::fs::write(skill_dir.join("SKILL.md"), original_md)
+            .await
+            .unwrap();
+
+        let mut improver = SkillImprover::new(
+            dir.path().to_path_buf(),
+            SkillImprovementConfig {
+                enabled: true,
+                cooldown_secs: 0,
+            },
+        );
+
+        let improved_toml = r#"[skill]
+name = "test-skill"
+description = "Improved description"
+version = "0.1.1"
+author = "zeroclaw-auto-updated"
+tags = ["auto-generated", "improved"]
+"#;
+
+        let result = improver
+            .improve_skill(
+                "test-skill",
+                improved_toml,
+                "Updated description and version",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, Some("test-skill".to_string()));
+
+        // Verify the markdown file was updated and kept in sync.
+        let md_content = tokio::fs::read_to_string(skill_dir.join("SKILL.md"))
+            .await
+            .unwrap();
+        assert!(md_content.contains("description: Improved description"));
+        assert!(md_content.contains("version: 0.1.1"));
+        assert!(md_content.contains("author: zeroclaw-auto-updated"));
+        assert!(md_content.contains("# Original Body"));
     }
 }

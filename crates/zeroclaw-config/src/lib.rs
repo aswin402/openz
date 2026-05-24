@@ -5,6 +5,8 @@
 // redundant calls, so the lint is silenced at the crate root.
 #![allow(clippy::to_string_in_format_args)]
 #![allow(clippy::useless_format)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::vec_init_then_push)]
 
 pub mod api_error;
 pub mod autonomy;

@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 use tokio::time::Duration;
 use zeroclaw_config::schema::Config;
 use zeroclaw_runtime::agent::loop_::AgentRunOverrides;
-use zeroclaw_runtime::agent::tui_events::{RuntimeEvent, LspStatus};
+use zeroclaw_runtime::agent::tui_events::{LspStatus, RuntimeEvent};
 
 // Simple activity state representation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +70,13 @@ impl TuiApp {
         let mut tui_receiver = self.tui_receiver;
 
         // Initialize MCP servers list from config
-        let mcp_servers: Vec<String> = self.config.mcp.servers.iter().map(|s| s.name.clone()).collect();
+        let mcp_servers: Vec<String> = self
+            .config
+            .mcp
+            .servers
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
 
         // Query initial git branch and dirty flag
         let (git_branch, git_dirty) = Self::query_git_info();
@@ -78,7 +84,10 @@ impl TuiApp {
         // Get initial model/provider from config
         let mut active_provider = None;
         let mut active_model = None;
-        if let Some((provider_type, _, model_cfg)) = self.config.resolved_model_provider_for_agent(&self.agent_alias) {
+        if let Some((provider_type, _, model_cfg)) = self
+            .config
+            .resolved_model_provider_for_agent(&self.agent_alias)
+        {
             active_provider = Some(provider_type.to_string());
             active_model = model_cfg.model.clone();
         }
@@ -222,7 +231,10 @@ impl TuiApp {
     }
 
     fn draw_status_line(state: &CliStatusState, spinner_frame: &str, last_height: &mut u16) {
-        if state.is_suspended || zeroclaw_runtime::agent::tui_events::TUI_SUSPENDED.load(std::sync::atomic::Ordering::SeqCst) {
+        if state.is_suspended
+            || zeroclaw_runtime::agent::tui_events::TUI_SUSPENDED
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
             return;
         }
         let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -250,10 +262,18 @@ impl TuiApp {
                     spans.push(format!("\x1B[36m{} Calling model...\x1B[0m", spinner_frame));
                 }
                 ActivityState::RunningTool(name) => {
-                    spans.push(format!("\x1B[33m{} tool: {}\x1B[0m", spinner_frame, truncate(name, 22)));
+                    spans.push(format!(
+                        "\x1B[33m{} tool: {}\x1B[0m",
+                        spinner_frame,
+                        truncate(name, 22)
+                    ));
                 }
                 ActivityState::RunningMcp(name) => {
-                    spans.push(format!("\x1B[33m{} tool: {}\x1B[0m", spinner_frame, truncate(name, 22)));
+                    spans.push(format!(
+                        "\x1B[33m{} tool: {}\x1B[0m",
+                        spinner_frame,
+                        truncate(name, 22)
+                    ));
                 }
                 _ => {
                     spans.push(format!("\x1B[36m{} Thinking...\x1B[0m", spinner_frame));
@@ -311,7 +331,11 @@ impl TuiApp {
         let status_line = spans.join("");
 
         // Draw at row h-2 (just above prompt row h-1)
-        print!("\x1B[s\x1B[{};1H\x1B[K{}\x1B[u", h.saturating_sub(2), status_line);
+        print!(
+            "\x1B[s\x1B[{};1H\x1B[K{}\x1B[u",
+            h.saturating_sub(2),
+            status_line
+        );
         let _ = std::io::stdout().flush();
     }
 

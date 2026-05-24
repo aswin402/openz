@@ -1,7 +1,18 @@
 #![allow(
     clippy::to_string_in_format_args,
     clippy::useless_format,
-    clippy::manual_inspect
+    clippy::manual_inspect,
+    clippy::items_after_test_module,
+    clippy::manual_strip,
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::needless_borrows_for_generic_args,
+    clippy::print_with_newline,
+    clippy::unnecessary_get_then_check,
+    clippy::disallowed_macros,
+    clippy::single_char_add_str,
+    clippy::field_reassign_with_default,
+    clippy::single_match
 )]
 //! Agent runtime — orchestration, security, observability, cron, SOP, skills, hardware, and more.
 

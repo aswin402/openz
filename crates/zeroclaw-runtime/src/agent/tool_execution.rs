@@ -59,7 +59,8 @@ pub async fn execute_one_tool(
         observer,
         cancellation_token,
         receipt_generator,
-    ).await;
+    )
+    .await;
 
     let success = match &res {
         Ok(outcome) => outcome.success,

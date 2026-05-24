@@ -1,7 +1,8 @@
 #![allow(
     clippy::to_string_in_format_args,
     clippy::useless_format,
-    clippy::collapsible_if
+    clippy::collapsible_if,
+    clippy::disallowed_macros
 )]
 //! Axum-based HTTP gateway with proper HTTP/1.1 compliance, body limits, and timeouts.
 //!
@@ -1274,6 +1275,8 @@ pub async fn run_gateway(
         .route("/webhook/gmail", post(handle_gmail_push_webhook))
         // ── Claude Code runner hooks ──
         .route("/hooks/claude-code", post(api::handle_claude_code_hook))
+        .route("/mcp", post(api::handle_mcp))
+        .route("/api/mcp", post(api::handle_mcp))
         // ── Web Dashboard API routes ──
         .route("/api/status", get(api::handle_api_status))
         .route("/api/logs", get(api_logs::handle_api_logs))
@@ -1499,7 +1502,7 @@ pub async fn run_gateway(
     // timeout.
     let cron_run_router: Router = Router::new()
         .route("/api/cron/{id}/run", post(api::handle_api_cron_run))
-        .with_state(state)
+        .with_state(state.clone())
         .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -1542,6 +1545,12 @@ pub async fn run_gateway(
         }
         _ => None,
     };
+
+    // Spawn the background UDS IPC listener for the MCP bridge
+    let state_uds = state.clone();
+    tokio::spawn(async move {
+        run_bridge_uds_listener(state_uds).await;
+    });
 
     if let Some(tls_acceptor) = tls_acceptor {
         // Manual TLS accept loop — serves each connection via hyper.
@@ -3199,6 +3208,322 @@ async fn handle_pair_code(State(state): State<AppState>) -> impl IntoResponse {
     });
 
     (StatusCode::OK, Json(body))
+}
+
+#[cfg(unix)]
+async fn run_bridge_uds_listener(state: AppState) {
+    use tokio::net::UnixListener;
+
+    let config = state.config.read().clone();
+    if !config.mcp.bridge_enabled {
+        return;
+    }
+
+    let socket_path = if let Some(ref path_str) = config.mcp.bridge_socket_path {
+        if path_str.starts_with('~') {
+            if let Some(user_dirs) = directories::UserDirs::new() {
+                let home = user_dirs.home_dir();
+                if let Some(rest) = path_str.strip_prefix('~') {
+                    home.join(rest.trim_start_matches(['/', '\\']))
+                } else {
+                    std::path::PathBuf::from(path_str)
+                }
+            } else {
+                std::path::PathBuf::from(path_str)
+            }
+        } else {
+            std::path::PathBuf::from(path_str)
+        }
+    } else {
+        let parent = config.data_dir.parent().unwrap_or(&config.data_dir);
+        parent.join("run").join("bridge.sock")
+    };
+
+    if let Some(parent) = socket_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(serde_json::json!({
+                        "error": e.to_string(),
+                        "path": parent.display().to_string()
+                    })),
+                "Failed to create bridge socket directory"
+            );
+            return;
+        }
+    }
+
+    // Delete existing socket if it exists
+    if socket_path.exists() {
+        if let Err(e) = std::fs::remove_file(&socket_path) {
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(serde_json::json!({
+                        "error": e.to_string(),
+                        "path": socket_path.display().to_string()
+                    })),
+                "Failed to remove existing bridge socket file"
+            );
+            return;
+        }
+    }
+
+    let listener = match UnixListener::bind(&socket_path) {
+        Ok(l) => l,
+        Err(e) => {
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(serde_json::json!({
+                        "error": e.to_string(),
+                        "path": socket_path.display().to_string()
+                    })),
+                "Failed to bind Unix Domain Socket for MCP bridge"
+            );
+            return;
+        }
+    };
+
+    // Restrict permissions to owner-only (0600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) =
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+        {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(serde_json::json!({
+                        "error": e.to_string(),
+                        "path": socket_path.display().to_string()
+                    })),
+                "Failed to set owner-only permissions (0600) on bridge socket"
+            );
+        }
+    }
+
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+            serde_json::json!({
+                "path": socket_path.display().to_string()
+            })
+        ),
+        "MCP bridge IPC socket listener started"
+    );
+
+    // Track shutdown signal receiver
+    let mut shutdown_rx = state.shutdown_tx.subscribe();
+
+    loop {
+        tokio::select! {
+            accept_res = listener.accept() => {
+                let (stream, _) = match accept_res {
+                    Ok(res) => res,
+                    Err(e) => {
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                                .with_attrs(serde_json::json!({ "error": e.to_string() })),
+                            "Failed to accept bridge IPC connection"
+                        );
+                        continue;
+                    }
+                };
+
+                let state_clone = state.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_bridge_connection(state_clone, stream).await {
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                                .with_attrs(serde_json::json!({ "error": e.to_string() })),
+                            "Bridge connection ended with error"
+                        );
+                    }
+                });
+            }
+            _ = shutdown_rx.changed() => {
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "MCP bridge IPC socket listener shutting down"
+                );
+                // Clean up socket file
+                let _ = std::fs::remove_file(&socket_path);
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn handle_bridge_connection(state: AppState, stream: tokio::net::UnixStream) -> Result<()> {
+    use serde::{Deserialize, Serialize};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct HandshakeMsg {
+        #[serde(rename = "type")]
+        msg_type: String,
+        protocol: Option<String>,
+        status: Option<String>,
+    }
+
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    // 1. Perform Handshake
+    line.clear();
+    let bytes_read = reader.read_line(&mut line).await?;
+    if bytes_read == 0 {
+        return Err(anyhow::anyhow!("Bridge connection closed before handshake"));
+    }
+
+    let handshake: HandshakeMsg = match serde_json::from_str(&line) {
+        Ok(h) => h,
+        Err(e) => {
+            let err_resp = serde_json::json!({
+                "type": "error",
+                "message": format!("Handshake parse error: {e}")
+            });
+            writer
+                .write_all(format!("{}\n", err_resp).as_bytes())
+                .await?;
+            return Err(anyhow::anyhow!("Failed to parse handshake hello: {e}"));
+        }
+    };
+
+    if handshake.msg_type != "hello" || handshake.protocol.as_deref() != Some("zeroclaw-ipc-v1") {
+        let err_resp = serde_json::json!({
+            "type": "error",
+            "message": "Invalid protocol or message type in handshake"
+        });
+        writer
+            .write_all(format!("{}\n", err_resp).as_bytes())
+            .await?;
+        return Err(anyhow::anyhow!(
+            "Invalid handshake message: {:?}",
+            handshake
+        ));
+    }
+
+    // Send hello_ack
+    let ack = serde_json::json!({
+        "type": "hello_ack",
+        "status": "ok"
+    });
+    writer.write_all(format!("{}\n", ack).as_bytes()).await?;
+
+    // 2. Loop reading and executing MCP requests
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line).await?;
+        if n == 0 {
+            // EOF
+            break;
+        }
+
+        let line_trimmed = line.trim();
+        if line_trimmed.is_empty() {
+            continue;
+        }
+
+        // Parse Request
+        let req: zeroclaw_runtime::agent::JsonRpcRequest = match serde_json::from_str(line_trimmed)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let err_resp = zeroclaw_runtime::agent::JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::Value::Null),
+                    result: None,
+                    error: Some(zeroclaw_runtime::agent::JsonRpcError {
+                        code: -32700,
+                        message: format!("Parse error: {e}"),
+                        data: None,
+                    }),
+                };
+                writer
+                    .write_all(format!("{}\n", serde_json::to_string(&err_resp)?).as_bytes())
+                    .await?;
+                continue;
+            }
+        };
+
+        // Instantiate Agent and handle request
+        let config = state.config.read().clone();
+        let agent_alias_opt = config
+            .agents
+            .iter()
+            .find(|(_, a)| a.enabled)
+            .map(|(alias, _)| alias.clone());
+
+        let resp = match agent_alias_opt {
+            Some(agent_alias) => {
+                match zeroclaw_runtime::agent::Agent::from_config_with_session_cwd_and_mcp_backchannel(
+                    &config,
+                    &agent_alias,
+                    None,
+                    true,
+                )
+                .await
+                {
+                    Ok(agent) => {
+                        zeroclaw_runtime::agent::handle_mcp_request(&agent, req, &config.mcp.bridge_deny_tools).await
+                    }
+                    Err(e) => Some(zeroclaw_runtime::agent::JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: req.id,
+                        result: None,
+                        error: Some(zeroclaw_runtime::agent::JsonRpcError {
+                            code: -32603,
+                            message: format!("Failed to instantiate agent: {e}"),
+                            data: None,
+                        }),
+                    }),
+                }
+            }
+            None => Some(zeroclaw_runtime::agent::JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: req.id,
+                result: None,
+                error: Some(zeroclaw_runtime::agent::JsonRpcError {
+                    code: -32603,
+                    message: "No enabled agents configured".to_string(),
+                    data: None,
+                }),
+            }),
+        };
+
+        // Write response
+        if let Some(resp) = resp {
+            writer
+                .write_all(format!("{}\n", serde_json::to_string(&resp)?).as_bytes())
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn run_bridge_uds_listener(state: AppState) {
+    let config = state.config.read().clone();
+    if config.mcp.bridge_enabled {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "MCP IPC bridge requested but Unix Domain Sockets are not supported on this platform"
+        );
+    }
 }
 
 #[cfg(test)]

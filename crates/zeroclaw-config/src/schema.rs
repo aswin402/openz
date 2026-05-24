@@ -102,6 +102,9 @@ pub struct Config {
     /// per-path PATCH applied by `save_dirty()`.
     #[serde(skip)]
     pub dirty_paths: std::collections::HashSet<String>,
+    /// Names of MCP servers loaded dynamically from `mcp.d/` directory.
+    #[serde(skip)]
+    pub dynamic_mcp_servers: Vec<String>,
     /// Config file schema version.
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -2736,6 +2739,9 @@ pub struct AliasedAgentConfig {
     /// `Config::validate()` fails loud on dangling references.
     #[serde(default)]
     pub model_provider: crate::providers::ModelProviderRef,
+    /// Fallback dotted model-provider aliases to try in order if the primary fails.
+    #[serde(default)]
+    pub model_fallbacks: Vec<String>,
     /// Risk profile alias (e.g. `"default"`). Resolves delegation guardrails at runtime.
     #[serde(default)]
     pub risk_profile: String,
@@ -2901,6 +2907,7 @@ impl Default for AliasedAgentConfig {
             enabled: true,
             channels: Vec::new(),
             model_provider: crate::providers::ModelProviderRef::default(),
+            model_fallbacks: Vec::new(),
             risk_profile: String::new(),
             runtime_profile: String::new(),
             skill_bundles: Vec::new(),
@@ -3617,7 +3624,7 @@ pub enum McpTransport {
 }
 
 /// Configuration for a single external MCP server.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, Configurable)]
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "mcp.servers"]
 pub struct McpServerConfig {
@@ -3648,6 +3655,29 @@ pub struct McpServerConfig {
     /// Optional per-call timeout in seconds (hard capped in validation).
     #[serde(default)]
     pub tool_timeout_secs: Option<u64>,
+    /// Whether this specific MCP server is enabled.
+    #[serde(default = "default_mcp_server_enabled")]
+    pub enabled: bool,
+}
+
+fn default_mcp_server_enabled() -> bool {
+    true
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            transport: McpTransport::default(),
+            url: None,
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            tool_timeout_secs: None,
+            enabled: true,
+        }
+    }
 }
 
 /// External MCP client configuration (`[mcp]` section).
@@ -3672,6 +3702,15 @@ pub struct McpConfig {
     #[serde(default, alias = "mcpServers")]
     #[nested]
     pub servers: Vec<McpServerConfig>,
+    /// Enable MCP IPC bridge for external tools (e.g. Claude Code).
+    #[serde(default)]
+    pub bridge_enabled: bool,
+    /// Custom path for the IPC bridge socket (defaults to `~/.zeroclaw/run/bridge.sock`).
+    #[serde(default)]
+    pub bridge_socket_path: Option<String>,
+    /// List of tools to deny over the bridge interface.
+    #[serde(default)]
+    pub bridge_deny_tools: Vec<String>,
 }
 
 fn default_deferred_loading() -> bool {
@@ -3680,10 +3719,378 @@ fn default_deferred_loading() -> bool {
 
 impl Default for McpConfig {
     fn default() -> Self {
-        Self {
+        let mut servers = Vec::new();
+
+        // 1. hermes (always enabled)
+        servers.push(McpServerConfig {
+            name: "hermes".to_string(),
+            transport: McpTransport::Stdio,
+            command: "hermes".to_string(),
+            args: vec!["mcp".to_string(), "serve".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 2. crush (always enabled)
+        servers.push(McpServerConfig {
+            name: "crush".to_string(),
+            transport: McpTransport::Stdio,
+            command: "crush".to_string(),
+            args: vec!["mcp".to_string(), "serve".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 3. opencode (always enabled)
+        servers.push(McpServerConfig {
+            name: "opencode".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "opencode-mcp".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 4. fetch (always enabled)
+        servers.push(McpServerConfig {
+            name: "fetch".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-fetch".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 5. github (disabled by default)
+        let mut github_env = HashMap::new();
+        github_env.insert("GITHUB_TOKEN".to_string(), "".to_string());
+        servers.push(McpServerConfig {
+            name: "github".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-github".to_string(),
+            ],
             enabled: false,
+            env: github_env,
+            ..Default::default()
+        });
+
+        // 6. brave-search (disabled by default)
+        let mut brave_env = HashMap::new();
+        brave_env.insert("BRAVE_API_KEY".to_string(), "".to_string());
+        servers.push(McpServerConfig {
+            name: "brave-search".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-brave-search".to_string(),
+            ],
+            enabled: false,
+            env: brave_env,
+            ..Default::default()
+        });
+
+        // 7. puppeteer (always enabled)
+        servers.push(McpServerConfig {
+            name: "puppeteer".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-puppeteer".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 8. memory (always enabled)
+        servers.push(McpServerConfig {
+            name: "memory".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-memory".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 9. sqlite (always enabled)
+        servers.push(McpServerConfig {
+            name: "sqlite".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-sqlite".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 10. filesystem (always enabled, default-pointing to current workspace)
+        servers.push(McpServerConfig {
+            name: "filesystem".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-filesystem".to_string(),
+                ".".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 11. git (always enabled)
+        servers.push(McpServerConfig {
+            name: "git".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-git".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 12. dns (always enabled)
+        servers.push(McpServerConfig {
+            name: "dns".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-dns".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 13. wikipedia (always enabled)
+        servers.push(McpServerConfig {
+            name: "wikipedia".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-wikipedia".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 14. pulsemcp (always enabled)
+        servers.push(McpServerConfig {
+            name: "pulsemcp".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "pulsemcp-server".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 15. time (always enabled)
+        servers.push(McpServerConfig {
+            name: "time".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-time".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 16. sequential-thinking (always enabled)
+        servers.push(McpServerConfig {
+            name: "sequential-thinking".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-sequential-thinking".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 17. ripgrep (always enabled)
+        servers.push(McpServerConfig {
+            name: "ripgrep".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "mcp-ripgrep".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 18. fd (always enabled)
+        servers.push(McpServerConfig {
+            name: "fd".to_string(),
+            transport: McpTransport::Stdio,
+            command: "uvx".to_string(),
+            args: vec!["fd-mcp".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 19. ast-grep (always enabled)
+        servers.push(McpServerConfig {
+            name: "ast-grep".to_string(),
+            transport: McpTransport::Stdio,
+            command: "uvx".to_string(),
+            args: vec![
+                "--from".to_string(),
+                "git+https://github.com/ast-grep/ast-grep-mcp".to_string(),
+                "ast-grep-server".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 20. tree-sitter (always enabled)
+        servers.push(McpServerConfig {
+            name: "tree-sitter".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@nendo/tree-sitter-mcp".to_string(),
+                "--mcp".to_string(),
+            ],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 21. playwright (always enabled)
+        servers.push(McpServerConfig {
+            name: "playwright".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "@playwright/mcp".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 22. repomix (always enabled)
+        servers.push(McpServerConfig {
+            name: "repomix".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "repomix".to_string(), "--mcp".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 23. chromadb (always enabled)
+        servers.push(McpServerConfig {
+            name: "chromadb".to_string(),
+            transport: McpTransport::Stdio,
+            command: "uvx".to_string(),
+            args: vec!["chroma-mcp".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 24. docker (always enabled)
+        servers.push(McpServerConfig {
+            name: "docker".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "@0xshariq/docker-mcp-server".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 25. duckduckgo (always enabled)
+        servers.push(McpServerConfig {
+            name: "duckduckgo".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "duckduckgo-mcp-server".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 26. duckdb (always enabled)
+        servers.push(McpServerConfig {
+            name: "duckdb".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "duckdb-mcp-native".to_string()],
+            enabled: true,
+            ..Default::default()
+        });
+
+        // 27. firecrawl (disabled by default)
+        let mut firecrawl_env = HashMap::new();
+        firecrawl_env.insert("FIRECRAWL_API_KEY".to_string(), "".to_string());
+        servers.push(McpServerConfig {
+            name: "firecrawl".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "firecrawl-mcp".to_string()],
+            enabled: false,
+            env: firecrawl_env,
+            ..Default::default()
+        });
+
+        // 28. tavily (disabled by default)
+        let mut tavily_env = HashMap::new();
+        tavily_env.insert("TAVILY_API_KEY".to_string(), "".to_string());
+        servers.push(McpServerConfig {
+            name: "tavily".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "tavily-mcp".to_string()],
+            enabled: false,
+            env: tavily_env,
+            ..Default::default()
+        });
+
+        // 29. exa (disabled by default)
+        let mut exa_env = HashMap::new();
+        exa_env.insert("EXA_API_KEY".to_string(), "".to_string());
+        servers.push(McpServerConfig {
+            name: "exa".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "exa-mcp-server".to_string()],
+            enabled: false,
+            env: exa_env,
+            ..Default::default()
+        });
+
+        // 30. context7 (disabled by default)
+        let mut context7_env = HashMap::new();
+        context7_env.insert("CONTEXT7_API_KEY".to_string(), "".to_string());
+        servers.push(McpServerConfig {
+            name: "context7".to_string(),
+            transport: McpTransport::Stdio,
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "@upstash/context7-mcp".to_string()],
+            enabled: false,
+            env: context7_env,
+            ..Default::default()
+        });
+
+        Self {
+            enabled: true,
             deferred_loading: default_deferred_loading(),
-            servers: Vec::new(),
+            servers,
+            bridge_enabled: false,
+            bridge_socket_path: None,
+            bridge_deny_tools: Vec::new(),
         }
     }
 }
@@ -4545,7 +4952,7 @@ pub struct SkillCreationConfig {
 impl Default for SkillCreationConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             max_skills: 500,
             similarity_threshold: 0.85,
         }
@@ -12696,6 +13103,7 @@ impl Default for Config {
             env_overridden_paths: std::collections::HashSet::new(),
             pre_override_snapshots: std::collections::HashMap::new(),
             dirty_paths: std::collections::HashSet::new(),
+            dynamic_mcp_servers: Vec::new(),
             schema_version: crate::migration::CURRENT_SCHEMA_VERSION,
             providers: crate::providers::Providers::default(),
             model_routes: Vec::new(),
@@ -12862,12 +13270,13 @@ async fn resolve_runtime_config_dirs(
     default_zeroclaw_dir: &Path,
     default_data_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
-    let custom_config_dir_val = std::env::var("OPENZ_CONFIG_DIR")
-        .or_else(|_| std::env::var("ZEROCLAW_CONFIG_DIR"));
+    let custom_config_dir_val =
+        std::env::var("OPENZ_CONFIG_DIR").or_else(|_| std::env::var("ZEROCLAW_CONFIG_DIR"));
     if let Ok(custom_config_dir) = custom_config_dir_val {
         let custom_config_dir = custom_config_dir.trim();
         if !custom_config_dir.is_empty() {
-            if std::env::var("OPENZ_DATA_DIR").is_ok() || std::env::var("ZEROCLAW_DATA_DIR").is_ok() {
+            if std::env::var("OPENZ_DATA_DIR").is_ok() || std::env::var("ZEROCLAW_DATA_DIR").is_ok()
+            {
                 ::zeroclaw_log::record!(
                     WARN,
                     ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
@@ -12886,8 +13295,8 @@ async fn resolve_runtime_config_dirs(
         }
     }
 
-    let custom_data_val = std::env::var("OPENZ_DATA_DIR")
-        .or_else(|_| std::env::var("ZEROCLAW_DATA_DIR"));
+    let custom_data_val =
+        std::env::var("OPENZ_DATA_DIR").or_else(|_| std::env::var("ZEROCLAW_DATA_DIR"));
     if let Ok(custom_data) = custom_data_val
         && !custom_data.trim().is_empty()
     {
@@ -12896,8 +13305,8 @@ async fn resolve_runtime_config_dirs(
         return Ok((zeroclaw_dir, data_dir, ConfigResolutionSource::EnvDataDir));
     }
 
-    let custom_workspace_val = std::env::var("OPENZ_WORKSPACE")
-        .or_else(|_| std::env::var("ZEROCLAW_WORKSPACE"));
+    let custom_workspace_val =
+        std::env::var("OPENZ_WORKSPACE").or_else(|_| std::env::var("ZEROCLAW_WORKSPACE"));
     if let Ok(custom_workspace) = custom_workspace_val
         && !custom_workspace.is_empty()
     {
@@ -12979,8 +13388,6 @@ fn expand_tilde_path(path: &str) -> PathBuf {
 
     PathBuf::from(expanded_str)
 }
-
-
 
 fn config_dir_creation_error(path: &Path) -> String {
     format!(
@@ -13473,6 +13880,13 @@ impl Config {
             config.env_overridden_paths = applied.paths;
             config.pre_override_snapshots = applied.snapshots;
 
+            let dynamic_servers = Self::load_dynamic_mcp_servers(&zeroclaw_dir).await?;
+            for server in dynamic_servers {
+                config.dynamic_mcp_servers.push(server.name.clone());
+                config.mcp.servers.retain(|s| s.name != server.name);
+                config.mcp.servers.push(server);
+            }
+
             // Validation must NOT prevent the daemon from booting. If
             // it did, a single broken agent reference would lock the
             // operator out of `/config` — the only place they can fix
@@ -13513,6 +13927,13 @@ impl Config {
             config.env_overridden_paths = applied.paths;
             config.pre_override_snapshots = applied.snapshots;
 
+            let dynamic_servers = Self::load_dynamic_mcp_servers(&zeroclaw_dir).await?;
+            for server in dynamic_servers {
+                config.dynamic_mcp_servers.push(server.name.clone());
+                config.mcp.servers.retain(|s| s.name != server.name);
+                config.mcp.servers.push(server);
+            }
+
             // Same boot-resilience as the load-existing branch above:
             // a fresh-init config can't realistically fail validation,
             // but if it does we still want the daemon up.
@@ -13529,6 +13950,86 @@ impl Config {
             ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"path": config.config_path.display().to_string(), "workspace": config.data_dir.display().to_string(), "source": resolution_source.as_str(), "initialized": true})), "Config loaded");
             Ok(config)
         }
+    }
+
+    async fn load_dynamic_mcp_servers(zeroclaw_dir: &Path) -> Result<Vec<McpServerConfig>> {
+        let mcp_d_dir = zeroclaw_dir.join("mcp.d");
+        if !mcp_d_dir.exists() {
+            if let Err(e) = fs::create_dir_all(&mcp_d_dir).await {
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Failed to create mcp.d directory at {}: {e}",
+                        mcp_d_dir.display()
+                    )
+                );
+            }
+            return Ok(Vec::new());
+        }
+
+        let mut servers = Vec::new();
+        let mut dir = match fs::read_dir(&mcp_d_dir).await {
+            Ok(d) => d,
+            Err(e) => {
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!("Failed to read mcp.d directory: {e}")
+                );
+                return Ok(Vec::new());
+            }
+        };
+
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                match fs::read_to_string(&path).await {
+                    Ok(content) => match toml::from_str::<McpServerConfig>(&content) {
+                        Ok(mut server) => {
+                            if server.name.is_empty() {
+                                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                    server.name = stem.to_string();
+                                }
+                            }
+                            servers.push(server);
+                        }
+                        Err(e) => {
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                &format!(
+                                    "Failed to parse MCP server config from {}: {e}",
+                                    path.display()
+                                )
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!(
+                                "Failed to read MCP server config file {}: {e}",
+                                path.display()
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(servers)
     }
 
     /// Collect non-fatal validation warnings — config that loads and
@@ -14726,6 +15227,13 @@ impl Config {
     pub async fn save(&self) -> Result<()> {
         // Encrypt secrets before serialization
         let mut config_to_save = self.clone();
+
+        // Exclude dynamically loaded MCP servers from serialization to config.toml
+        config_to_save
+            .mcp
+            .servers
+            .retain(|server| !self.dynamic_mcp_servers.contains(&server.name));
+
         let config_path = self.resolve_config_path_for_save().await?;
         let zeroclaw_dir = config_path
             .parent()
@@ -14811,6 +15319,13 @@ impl Config {
         }
 
         let mut config_to_save = self.clone();
+
+        // Exclude dynamically loaded MCP servers from serialization to config.toml
+        config_to_save
+            .mcp
+            .servers
+            .retain(|server| !self.dynamic_mcp_servers.contains(&server.name));
+
         let zeroclaw_dir = config_path
             .parent()
             .context("Config path must have a parent directory")?;
@@ -15551,6 +16066,101 @@ enabled = true
     }
 
     #[test]
+    async fn test_dynamic_mcp_loading() {
+        let temp = TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+
+        // Write a basic config.toml
+        let initial_config_toml = r#"
+schema_version = 3
+[mcp]
+enabled = true
+[[mcp.servers]]
+name = "on-disk-server"
+command = "cargo"
+args = ["run"]
+"#;
+        std::fs::write(&config_path, initial_config_toml).expect("write config.toml");
+
+        // Create mcp.d directory
+        let mcp_d = temp.path().join("mcp.d");
+        std::fs::create_dir_all(&mcp_d).expect("create mcp.d");
+
+        // Write hermes.toml (should use filename as name since no name specified)
+        let hermes_toml = r#"
+command = "hermes"
+args = ["mcp", "serve"]
+"#;
+        std::fs::write(mcp_d.join("hermes.toml"), hermes_toml).expect("write hermes.toml");
+
+        // Write crush.toml (specifies name explicitly)
+        let crush_toml = r#"
+name = "crush-custom"
+command = "crush"
+args = ["serve"]
+"#;
+        std::fs::write(mcp_d.join("crush.toml"), crush_toml).expect("write crush.toml");
+
+        // Set env var to point to temp dir
+        unsafe {
+            std::env::set_var(
+                "ZEROCLAW_CONFIG_DIR",
+                temp.path().to_string_lossy().to_string(),
+            );
+            std::env::remove_var("OPENZ_CONFIG_DIR"); // Ensure no interference
+        }
+
+        // Call load_or_init
+        let loaded_config = Config::load_or_init().await.expect("load_or_init");
+
+        // Assert dynamic servers loaded
+        assert_eq!(loaded_config.dynamic_mcp_servers.len(), 2);
+        assert!(
+            loaded_config
+                .dynamic_mcp_servers
+                .contains(&"hermes".to_string())
+        );
+        assert!(
+            loaded_config
+                .dynamic_mcp_servers
+                .contains(&"crush-custom".to_string())
+        );
+
+        // Assert they are in config.mcp.servers
+        let servers = &loaded_config.mcp.servers;
+        assert_eq!(servers.len(), 3); // on-disk-server, hermes, crush-custom
+
+        let on_disk = servers
+            .iter()
+            .find(|s| s.name == "on-disk-server")
+            .expect("on-disk-server");
+        assert_eq!(on_disk.command, "cargo");
+
+        let hermes = servers.iter().find(|s| s.name == "hermes").expect("hermes");
+        assert_eq!(hermes.command, "hermes");
+        assert_eq!(hermes.args, vec!["mcp".to_string(), "serve".to_string()]);
+
+        let crush = servers
+            .iter()
+            .find(|s| s.name == "crush-custom")
+            .expect("crush-custom");
+        assert_eq!(crush.command, "crush");
+
+        // Call save() and check that dynamic servers are NOT written back to config.toml
+        loaded_config.save().await.expect("save config");
+
+        let saved_content = std::fs::read_to_string(&config_path).expect("read config.toml");
+        assert!(saved_content.contains("on-disk-server"));
+        assert!(!saved_content.contains("hermes"));
+        assert!(!saved_content.contains("crush-custom"));
+
+        // Clean up env var
+        unsafe {
+            std::env::remove_var("ZEROCLAW_CONFIG_DIR");
+        }
+    }
+
+    #[test]
     async fn observability_config_default() {
         let o = ObservabilityConfig::default();
         assert_eq!(o.backend, "none");
@@ -15997,6 +16607,7 @@ auto_save = true
             transcription: TranscriptionConfig::default(),
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
+            dynamic_mcp_servers: Vec::new(),
             nodes: NodesConfig::default(),
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
@@ -16536,6 +17147,7 @@ default_temperature = 0.7
         );
         let config = Config {
             schema_version: crate::migration::CURRENT_SCHEMA_VERSION,
+            dynamic_mcp_servers: Vec::new(),
             providers,
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
@@ -19635,10 +20247,10 @@ require_otp_to_resume = true
     }
 
     #[test]
-    async fn mcp_config_default_disabled_with_empty_servers() {
+    async fn mcp_config_default_enabled_with_servers() {
         let cfg = McpConfig::default();
-        assert!(!cfg.enabled);
-        assert!(cfg.servers.is_empty());
+        assert!(cfg.enabled);
+        assert!(!cfg.servers.is_empty());
     }
 
     #[test]
@@ -21025,6 +21637,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         // The new entry's `name` field is initialized to the supplied key
         // by the macro's List-kind insertion logic.
         let mut config = Config::default();
+        config.mcp.servers.clear();
         assert!(config.mcp.servers.is_empty());
 
         let created = config
@@ -21185,6 +21798,7 @@ allowed_users = []
         // etc.) and gives the dashboard a per-field editor instead of a
         // monolithic JSON blob.
         let mut config = Config::default();
+        config.mcp.servers.clear();
 
         // The List section is discoverable.
         let sections = Config::map_key_sections();

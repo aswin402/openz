@@ -5,15 +5,15 @@ use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
-    Terminal,
 };
 use std::io;
 use std::path::PathBuf;
@@ -106,10 +106,7 @@ impl TuiSession {
 
 pub(crate) fn load_todos() -> Vec<TodoItem> {
     let mut todos = Vec::new();
-    let paths = vec![
-        PathBuf::from("task.md"),
-        PathBuf::from(".planning/task.md"),
-    ];
+    let paths = vec![PathBuf::from("task.md"), PathBuf::from(".planning/task.md")];
     for path in paths {
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(path) {
@@ -152,13 +149,7 @@ impl TuiApp {
         skills: Vec<String>,
     ) -> Self {
         Self {
-            session: TuiSession::new(
-                history,
-                active_model,
-                active_provider,
-                mcp_servers,
-                skills,
-            ),
+            session: TuiSession::new(history, active_model, active_provider, mcp_servers, skills),
         }
     }
 
@@ -321,12 +312,12 @@ impl TuiApp {
                                                 self.session.is_thinking = true;
                                                 self.session.status = "Thinking...".to_string();
                                                 self.session.scroll_offset = 0;
- 
+
                                                 // Push user message to TUI history
                                                 let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
                                                 let enriched = format!("[{}] {}", now, trimmed);
                                                 self.session.history.push(ChatMessage::user(&enriched));
- 
+
                                                 // Spawn background processing task
                                                 let event_tx_done = event_tx.clone();
                                                 let mut history_clone = self.session.history.clone();
@@ -343,10 +334,10 @@ impl TuiApp {
                                                 let switch_cb_clone = model_switch_callback.clone();
                                                 let pacing_clone = pacing_config.clone();
                                                 let exc_clone = excluded_tools.clone();
- 
+
                                                 tokio::spawn(async move {
                                                     let (delta_tx, mut delta_rx) = mpsc::channel::<crate::agent::loop_::StreamDelta>(100);
- 
+
                                                     // Relay stream events to main loop
                                                     let event_tx_relay = event_tx_done.clone();
                                                     tokio::spawn(async move {
@@ -354,7 +345,7 @@ impl TuiApp {
                                                             let _ = event_tx_relay.send(TuiEvent::AgentDelta(delta)).await;
                                                         }
                                                     });
- 
+
                                                     let prov_guard = provider_ref_clone.lock().await;
                                                     let res = crate::agent::loop_::run_tool_call_loop(
                                                         &**prov_guard,
@@ -469,11 +460,7 @@ impl TuiApp {
         }
 
         disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            cursor::Show
-        )?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
         Ok(())
     }
 
@@ -492,7 +479,12 @@ impl TuiApp {
 
     fn draw_sidebar(&self, f: &mut ratatui::Frame, area: Rect) {
         let block = Block::default()
-            .title(Span::styled(" openz status ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " openz status ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray));
@@ -500,12 +492,12 @@ impl TuiApp {
         let sidebar_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6),  // Session Info
-                Constraint::Length(4),  // Usage Metrics
-                Constraint::Length(6),  // MCP Servers
-                Constraint::Length(6),  // Skills list
-                Constraint::Length(4),  // LSP / Subagents status
-                Constraint::Min(4),     // GSD Todos
+                Constraint::Length(6), // Session Info
+                Constraint::Length(4), // Usage Metrics
+                Constraint::Length(6), // MCP Servers
+                Constraint::Length(6), // Skills list
+                Constraint::Length(4), // LSP / Subagents status
+                Constraint::Min(4),    // GSD Todos
             ])
             .split(block.inner(area));
 
@@ -519,14 +511,32 @@ impl TuiApp {
             ]),
             Line::from(vec![
                 Span::styled("Model: ", Style::default().fg(Color::Cyan)),
-                Span::styled(&self.session.active_model, Style::default().fg(Color::White)),
+                Span::styled(
+                    &self.session.active_model,
+                    Style::default().fg(Color::White),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("LSP: ", Style::default().fg(Color::Cyan)),
-                Span::styled(&self.session.lsp_status, Style::default().fg(if self.session.lsp_status == "Active" { Color::Green } else { Color::Yellow })),
+                Span::styled(
+                    &self.session.lsp_status,
+                    Style::default().fg(if self.session.lsp_status == "Active" {
+                        Color::Green
+                    } else {
+                        Color::Yellow
+                    }),
+                ),
             ]),
         ];
-        f.render_widget(Paragraph::new(model_text).block(Block::default().title("Active LLM Service").borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(40, 40, 40)))), sidebar_layout[0]);
+        f.render_widget(
+            Paragraph::new(model_text).block(
+                Block::default()
+                    .title("Active LLM Service")
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::Rgb(40, 40, 40))),
+            ),
+            sidebar_layout[0],
+        );
 
         // Segment 2: Usage
         let usage_text = vec![
@@ -536,15 +546,29 @@ impl TuiApp {
             ]),
             Line::from(vec![
                 Span::styled("Session Cost: ", Style::default().fg(Color::Cyan)),
-                Span::styled(format!("${:.5}", self.session.cost_usd), Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("${:.5}", self.session.cost_usd),
+                    Style::default().fg(Color::Green),
+                ),
             ]),
         ];
-        f.render_widget(Paragraph::new(usage_text).block(Block::default().title("Resource Metrics").borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(40, 40, 40)))), sidebar_layout[1]);
+        f.render_widget(
+            Paragraph::new(usage_text).block(
+                Block::default()
+                    .title("Resource Metrics")
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::Rgb(40, 40, 40))),
+            ),
+            sidebar_layout[1],
+        );
 
         // Segment 3: MCP
         let mut mcp_lines = Vec::new();
         if self.session.mcp_servers.is_empty() {
-            mcp_lines.push(Line::from(Span::styled("None active", Style::default().fg(Color::DarkGray))));
+            mcp_lines.push(Line::from(Span::styled(
+                "None active",
+                Style::default().fg(Color::DarkGray),
+            )));
         } else {
             for mcp in &self.session.mcp_servers {
                 mcp_lines.push(Line::from(vec![
@@ -553,12 +577,23 @@ impl TuiApp {
                 ]));
             }
         }
-        f.render_widget(Paragraph::new(mcp_lines).block(Block::default().title("MCP Servers").borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(40, 40, 40)))), sidebar_layout[2]);
+        f.render_widget(
+            Paragraph::new(mcp_lines).block(
+                Block::default()
+                    .title("MCP Servers")
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::Rgb(40, 40, 40))),
+            ),
+            sidebar_layout[2],
+        );
 
         // Segment 4: Skills
         let mut skill_lines = Vec::new();
         if self.session.skills.is_empty() {
-            skill_lines.push(Line::from(Span::styled("None installed", Style::default().fg(Color::DarkGray))));
+            skill_lines.push(Line::from(Span::styled(
+                "None installed",
+                Style::default().fg(Color::DarkGray),
+            )));
         } else {
             for skill in &self.session.skills {
                 skill_lines.push(Line::from(vec![
@@ -567,7 +602,15 @@ impl TuiApp {
                 ]));
             }
         }
-        f.render_widget(Paragraph::new(skill_lines).block(Block::default().title("Active Skills").borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(40, 40, 40)))), sidebar_layout[3]);
+        f.render_widget(
+            Paragraph::new(skill_lines).block(
+                Block::default()
+                    .title("Active Skills")
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::Rgb(40, 40, 40))),
+            ),
+            sidebar_layout[3],
+        );
 
         // Segment 5: Subagents
         let mut sub_lines = Vec::new();
@@ -578,26 +621,54 @@ impl TuiApp {
         if !self.session.subagents.is_empty() {
             sub_lines.push(Line::from(vec![
                 Span::raw(" Running: "),
-                Span::styled(self.session.subagents.join(", "), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    self.session.subagents.join(", "),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]));
         }
-        f.render_widget(Paragraph::new(sub_lines).block(Block::default().title("Subagents").borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Rgb(40, 40, 40)))), sidebar_layout[4]);
+        f.render_widget(
+            Paragraph::new(sub_lines).block(
+                Block::default()
+                    .title("Subagents")
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::Rgb(40, 40, 40))),
+            ),
+            sidebar_layout[4],
+        );
 
         // Segment 6: GSD Todos
         let mut todo_lines = Vec::new();
         if self.session.todos.is_empty() {
-            todo_lines.push(Line::from(Span::styled("No tasks found", Style::default().fg(Color::DarkGray))));
+            todo_lines.push(Line::from(Span::styled(
+                "No tasks found",
+                Style::default().fg(Color::DarkGray),
+            )));
         } else {
             for todo in &self.session.todos {
                 let symbol = if todo.checked { "[x] " } else { "[ ] " };
-                let color = if todo.checked { Color::DarkGray } else { Color::White };
+                let color = if todo.checked {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                };
                 todo_lines.push(Line::from(vec![
-                    Span::styled(symbol, Style::default().fg(if todo.checked { Color::Green } else { Color::Yellow })),
+                    Span::styled(
+                        symbol,
+                        Style::default().fg(if todo.checked {
+                            Color::Green
+                        } else {
+                            Color::Yellow
+                        }),
+                    ),
                     Span::styled(&todo.text, Style::default().fg(color)),
                 ]));
             }
         }
-        f.render_widget(Paragraph::new(todo_lines).block(Block::default().title("GSD Checklist")), sidebar_layout[5]);
+        f.render_widget(
+            Paragraph::new(todo_lines).block(Block::default().title("GSD Checklist")),
+            sidebar_layout[5],
+        );
     }
 
     fn draw_chat_area(&self, f: &mut ratatui::Frame, area: Rect) {
@@ -611,7 +682,12 @@ impl TuiApp {
 
         // Render Chat History
         let history_block = Block::default()
-            .title(Span::styled(" chat session ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " chat session ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray));
@@ -624,9 +700,22 @@ impl TuiApp {
             }
 
             let role_label = match msg.role.as_str() {
-                "user" => Span::styled("User ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                "assistant" => Span::styled("openz ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                _ => Span::styled(format!("{} ", msg.role), Style::default().fg(Color::Magenta)),
+                "user" => Span::styled(
+                    "User ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                "assistant" => Span::styled(
+                    "openz ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                _ => Span::styled(
+                    format!("{} ", msg.role),
+                    Style::default().fg(Color::Magenta),
+                ),
             };
 
             chat_lines.push(Line::from(vec![
@@ -637,7 +726,10 @@ impl TuiApp {
             // Simple markdown-ish line rendering
             for line in msg.content.lines() {
                 if line.trim().starts_with("```") {
-                    chat_lines.push(Line::from(Span::styled(line, Style::default().fg(Color::DarkGray))));
+                    chat_lines.push(Line::from(Span::styled(
+                        line,
+                        Style::default().fg(Color::DarkGray),
+                    )));
                 } else if line.trim().starts_with("- ") || line.trim().starts_with("* ") {
                     chat_lines.push(Line::from(vec![
                         Span::styled("  • ", Style::default().fg(Color::Cyan)),
@@ -659,8 +751,18 @@ impl TuiApp {
                 _ => "⠸",
             };
             chat_lines.push(Line::from(vec![
-                Span::styled(format!("{} openz ", spinner), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("Thinking ({})", self.session.status), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                Span::styled(
+                    format!("{} openz ", spinner),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("Thinking ({})", self.session.status),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ),
             ]));
         }
 
@@ -694,7 +796,11 @@ impl TuiApp {
             .title(Span::styled(input_title, Style::default().fg(Color::Cyan)))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(if self.session.is_thinking { Color::Yellow } else { Color::DarkGray }));
+            .border_style(Style::default().fg(if self.session.is_thinking {
+                Color::Yellow
+            } else {
+                Color::DarkGray
+            }));
 
         let input_text = if self.session.is_thinking {
             format!("Processing: {}", self.session.status)
@@ -702,12 +808,15 @@ impl TuiApp {
             self.session.input.clone()
         };
 
-        let input_paragraph = Paragraph::new(input_text)
-            .block(input_block)
-            .style(Style::default().fg(if self.session.is_thinking { Color::DarkGray } else { Color::White }));
+        let input_paragraph =
+            Paragraph::new(input_text)
+                .block(input_block)
+                .style(Style::default().fg(if self.session.is_thinking {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                }));
 
         f.render_widget(input_paragraph, chat_layout[1]);
     }
 }
-
-

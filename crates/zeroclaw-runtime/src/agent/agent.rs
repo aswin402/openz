@@ -26,8 +26,8 @@ pub use zeroclaw_api::agent::TurnEvent;
 
 pub struct Agent {
     model_provider: Box<dyn ModelProvider>,
-    tools: Vec<Box<dyn Tool>>,
-    tool_specs: Vec<ToolSpec>,
+    pub(crate) tools: Vec<Box<dyn Tool>>,
+    pub(crate) tool_specs: Vec<ToolSpec>,
     memory: Arc<dyn Memory>,
     observer: Arc<dyn Observer>,
     prompt_builder: SystemPromptBuilder,
@@ -1053,7 +1053,7 @@ impl Agent {
         Ok(prepared.messages)
     }
 
-    async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
+    pub(crate) async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
         let start = Instant::now();
 
         // ── Hook: before_tool_call (modifying) ──────────────────

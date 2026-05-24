@@ -2867,6 +2867,34 @@ pub struct AgentRunOverrides {
     pub tui_sender: Option<tokio::sync::mpsc::Sender<crate::agent::tui_events::RuntimeEvent>>,
 }
 
+pub fn run_boxed<'a>(
+    config: Config,
+    agent_alias: &'a str,
+    message: Option<String>,
+    provider_override: Option<String>,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    peripheral_overrides: Vec<String>,
+    interactive: bool,
+    session_state_file: Option<std::path::PathBuf>,
+    allowed_tools: Option<Vec<String>>,
+    overrides: AgentRunOverrides,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>> {
+    Box::pin(run(
+        config,
+        agent_alias,
+        message,
+        provider_override,
+        model_override,
+        temperature,
+        peripheral_overrides,
+        interactive,
+        session_state_file,
+        allowed_tools,
+        overrides,
+    ))
+}
+
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn run(
     config: Config,

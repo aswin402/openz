@@ -243,6 +243,9 @@ impl McpRegistry {
         let mut tool_index = HashMap::new();
 
         for config in configs {
+            if !config.enabled {
+                continue;
+            }
             match McpServer::connect(config.clone()).await {
                 Ok(server) => {
                     let server_idx = servers.len();
@@ -348,6 +351,7 @@ mod tests {
             transport: McpTransport::Stdio,
             url: None,
             headers: std::collections::HashMap::default(),
+            enabled: true,
         };
         let result = McpServer::connect(config).await;
         assert!(result.is_err());
@@ -367,6 +371,28 @@ mod tests {
             transport: McpTransport::Stdio,
             url: None,
             headers: std::collections::HashMap::default(),
+            enabled: true,
+        }];
+        let registry = McpRegistry::connect_all(&configs)
+            .await
+            .expect("connect_all should not fail");
+        assert!(registry.is_empty());
+        assert_eq!(registry.tool_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connect_all_skips_disabled_servers() {
+        // A server config that is disabled should be skipped entirely (not even attempted).
+        let configs = vec![McpServerConfig {
+            name: "disabled-bad-command".to_string(),
+            command: "/usr/bin/does_not_exist_zc_test".to_string(),
+            args: vec![],
+            env: std::collections::HashMap::default(),
+            tool_timeout_secs: None,
+            transport: McpTransport::Stdio,
+            url: None,
+            headers: std::collections::HashMap::default(),
+            enabled: false, // Disabled
         }];
         let registry = McpRegistry::connect_all(&configs)
             .await

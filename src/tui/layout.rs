@@ -15,9 +15,9 @@ impl TuiLayout {
         // 2. Status bar (1 line)
         // 3. Input box (3 lines)
         let main_constraints = vec![
-            Constraint::Min(0),      // Chat + Sidebar
-            Constraint::Length(1),   // Status Bar
-            Constraint::Length(3),   // Input
+            Constraint::Min(0),    // Chat + Sidebar
+            Constraint::Length(1), // Status Bar
+            Constraint::Length(3), // Input
         ];
 
         let main_chunks = Layout::default()
@@ -35,8 +35,8 @@ impl TuiLayout {
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Min(0),          // Chat
-                    Constraint::Length(36),      // Fixed size sidebar
+                    Constraint::Min(0),     // Chat
+                    Constraint::Length(36), // Fixed size sidebar
                 ])
                 .split(top_area);
 

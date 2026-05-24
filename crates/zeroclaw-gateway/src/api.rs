@@ -1650,6 +1650,87 @@ pub async fn handle_claude_code_hook(
     Json(serde_json::json!({ "ok": true }))
 }
 
+// ── MCP server REST endpoint ──────────────────────────────────────────
+
+/// POST /mcp — receives Model Context Protocol JSON-RPC requests
+pub async fn handle_mcp(
+    State(state): State<AppState>,
+    Json(payload): Json<zeroclaw_runtime::agent::JsonRpcRequest>,
+) -> impl IntoResponse {
+    let config = state.config.read().clone();
+
+    if !config.mcp.bridge_enabled {
+        let err_resp = zeroclaw_runtime::agent::JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: payload.id.clone(),
+            result: None,
+            error: Some(zeroclaw_runtime::agent::JsonRpcError {
+                code: -32601,
+                message: "MCP bridge/server is disabled in configuration".to_string(),
+                data: None,
+            }),
+        };
+        return Json(err_resp).into_response();
+    }
+
+    let agent_alias_opt = config
+        .agents
+        .iter()
+        .find(|(_, a)| a.enabled)
+        .map(|(alias, _)| alias.clone());
+
+    let agent_alias = match agent_alias_opt {
+        Some(alias) => alias,
+        None => {
+            let err_resp = zeroclaw_runtime::agent::JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: payload.id.clone(),
+                result: None,
+                error: Some(zeroclaw_runtime::agent::JsonRpcError {
+                    code: -32603,
+                    message: "No enabled agents configured".to_string(),
+                    data: None,
+                }),
+            };
+            return Json(err_resp).into_response();
+        }
+    };
+
+    // Instantiate Agent on-demand
+    let agent =
+        match zeroclaw_runtime::agent::Agent::from_config_with_session_cwd_and_mcp_backchannel(
+            &config,
+            &agent_alias,
+            None,
+            true,
+        )
+        .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                let err_resp = zeroclaw_runtime::agent::JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: payload.id.clone(),
+                    result: None,
+                    error: Some(zeroclaw_runtime::agent::JsonRpcError {
+                        code: -32603,
+                        message: format!("Failed to instantiate agent: {e}"),
+                        data: None,
+                    }),
+                };
+                return Json(err_resp).into_response();
+            }
+        };
+
+    let resp =
+        zeroclaw_runtime::agent::handle_mcp_request(&agent, payload, &config.mcp.bridge_deny_tools)
+            .await;
+    match resp {
+        Some(r) => Json(r).into_response(),
+        None => axum::http::StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

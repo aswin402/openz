@@ -837,6 +837,12 @@ impl ModelRoutingConfigTool {
             None
         };
 
+        let model_fallbacks_update = if let Some(raw) = args.get("model_fallbacks") {
+            Some(Self::parse_string_list(raw, "model_fallbacks")?)
+        } else {
+            None
+        };
+
         let mut cfg = self.load_config_without_env()?;
 
         // synthesize providers.models[model_provider_family][name] from inline brain params.
@@ -927,6 +933,10 @@ impl ModelRoutingConfigTool {
         next_agent.model_provider = agent_model_provider_ref.into();
         next_agent.risk_profile = name.clone();
         next_agent.runtime_profile = name.clone();
+
+        if let Some(fallbacks) = model_fallbacks_update {
+            next_agent.model_fallbacks = fallbacks;
+        }
 
         cfg.save().await?;
 
@@ -1070,6 +1080,13 @@ impl Tool for ModelRoutingConfigTool {
                     "type": ["integer", "null"],
                     "minimum": 1,
                     "description": "Maximum tool-call iterations for agentic delegate mode"
+                },
+                "model_fallbacks": {
+                    "description": "Fallback dotted model-provider aliases to try in order (string or string array, e.g. openai.default, anthropic.default)",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}}
+                    ]
                 }
             },
             "additionalProperties": false
