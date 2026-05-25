@@ -11784,6 +11784,11 @@ pub struct SecurityConfig {
     #[serde(default)]
     #[nested]
     pub webauthn: WebAuthnConfig,
+
+    /// Prompt injection scanner configuration.
+    #[serde(default)]
+    #[nested]
+    pub prompt_guard: PromptGuardConfig,
 }
 
 /// WebAuthn / FIDO2 hardware key authentication configuration (`[security.webauthn]`).
@@ -11829,6 +11834,42 @@ fn default_webauthn_rp_origin() -> String {
 
 fn default_webauthn_rp_name() -> String {
     "ZeroClaw".into()
+}
+
+/// Prompt injection scanner configuration (`[security.prompt_guard]`).
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "security.prompt_guard"]
+pub struct PromptGuardConfig {
+    /// Enable prompt injection scanner. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Action to take when suspicious content is detected ("warn", "block", "sanitize").
+    #[serde(default = "default_prompt_guard_action")]
+    pub action: String,
+
+    /// Sensitivity threshold (0.0-1.0, higher = more strict).
+    #[serde(default = "default_prompt_guard_sensitivity")]
+    pub sensitivity: f64,
+}
+
+fn default_prompt_guard_action() -> String {
+    "warn".to_string()
+}
+
+fn default_prompt_guard_sensitivity() -> f64 {
+    0.7
+}
+
+impl Default for PromptGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            action: default_prompt_guard_action(),
+            sensitivity: default_prompt_guard_sensitivity(),
+        }
+    }
 }
 
 /// OTP validation strategy.
