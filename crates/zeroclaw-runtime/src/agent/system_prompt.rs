@@ -291,6 +291,10 @@ pub fn build_system_prompt_with_mode_and_autonomy(
         load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
     }
 
+    // ── 5b. Workspace Rules Alignment ───────────────────────────
+    let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
+    load_workspace_rules_files(&mut prompt, workspace_dir, max_chars);
+
     // ── 6. Date & Time ──────────────────────────────────────────
     let now = chrono::Local::now();
     let _ = writeln!(
@@ -397,6 +401,27 @@ fn inject_workspace_file(
         Err(_) => {
             // Missing-file marker (matches OpenClaw behavior)
             let _ = writeln!(prompt, "### {filename}\n\n[File not found: {filename}]\n");
+        }
+    }
+}
+
+/// Scan workspace directory for rules files (.openz.md, .openzrules, .cursorrules)
+/// and load them as project context guidelines if they exist.
+fn load_workspace_rules_files(
+    prompt: &mut String,
+    workspace_dir: &std::path::Path,
+    max_chars_per_file: usize,
+) {
+    let rules_files = [".openz.md", ".openzrules", ".cursorrules"];
+    let mut loaded_any = false;
+    for filename in &rules_files {
+        let path = workspace_dir.join(filename);
+        if path.exists() {
+            if !loaded_any {
+                prompt.push_str("### Workspace Rules\n\n");
+                loaded_any = true;
+            }
+            inject_workspace_file(prompt, workspace_dir, filename, max_chars_per_file);
         }
     }
 }

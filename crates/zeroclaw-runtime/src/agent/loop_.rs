@@ -11895,6 +11895,59 @@ Let me check the result."#;
     }
 
     #[test]
+    fn system_prompt_loads_workspace_rules_files() {
+        use crate::agent::system_prompt::build_system_prompt_with_mode;
+        use std::fs;
+
+        let workspace = tempdir().unwrap();
+
+        // Write workspace rules files
+        let openz_content = "OpenZ Specific Rules: rule 1, rule 2.";
+        let cursor_content = "Cursor Specific Rules: rule A, rule B.";
+
+        fs::write(workspace.path().join(".openz.md"), openz_content).unwrap();
+        fs::write(workspace.path().join(".cursorrules"), cursor_content).unwrap();
+
+        let system_prompt = build_system_prompt_with_mode(
+            workspace.path(),
+            "test-model",
+            &[],
+            &[],
+            None,
+            None,
+            false,
+            zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
+            crate::security::AutonomyLevel::default(),
+        );
+
+        assert!(
+            system_prompt.contains("### Workspace Rules"),
+            "System prompt must contain the Workspace Rules section header"
+        );
+        assert!(
+            system_prompt.contains("### .openz.md"),
+            "System prompt must contain the header for .openz.md"
+        );
+        assert!(
+            system_prompt.contains(openz_content),
+            "System prompt must contain .openz.md content"
+        );
+        assert!(
+            system_prompt.contains("### .cursorrules"),
+            "System prompt must contain the header for .cursorrules"
+        );
+        assert!(
+            system_prompt.contains(cursor_content),
+            "System prompt must contain .cursorrules content"
+        );
+        // Verify missing rules files (.openzrules in this case) are not listed/annotated
+        assert!(
+            !system_prompt.contains(".openzrules"),
+            "Missing rules files must not be listed in the system prompt"
+        );
+    }
+
+    #[test]
     fn strict_non_native_prompt_policy_hides_text_tool_protocol_inputs() {
         let mut tool_descs = vec![("shell", "Run commands")];
         let mut deferred_section = "## Deferred MCP Tools\n\n- mcp__example".to_string();
