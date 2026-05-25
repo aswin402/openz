@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use screenshots::Screen;
 use serde_json::json;
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -12,10 +13,7 @@ const SCREENSHOT_TIMEOUT_SECS: u64 = 15;
 /// Maximum base64 payload size to return (2 MB of base64 ≈ 1.5 MB image).
 const MAX_BASE64_BYTES: usize = 2_097_152;
 
-/// Tool for capturing screenshots using platform-native commands.
-///
-/// macOS: `screencapture`
-/// Linux: tries `gnome-screenshot`, `scrot`, `import` (`ImageMagick`) in order.
+/// Tool for capturing screenshots using pure-Rust API.
 pub struct ScreenshotTool {
     security: Arc<SecurityPolicy>,
 }
@@ -23,35 +21,6 @@ pub struct ScreenshotTool {
 impl ScreenshotTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
         Self { security }
-    }
-
-    /// Determine the screenshot command for the current platform.
-    fn screenshot_command(output_path: &str) -> Option<Vec<String>> {
-        if cfg!(target_os = "macos") {
-            Some(vec![
-                "screencapture".into(),
-                "-x".into(), // no sound
-                output_path.into(),
-            ])
-        } else if cfg!(target_os = "linux") {
-            Some(vec![
-                "sh".into(),
-                "-c".into(),
-                format!(
-                    "if command -v gnome-screenshot >/dev/null 2>&1; then \
-                         gnome-screenshot -f '{output_path}'; \
-                     elif command -v scrot >/dev/null 2>&1; then \
-                         scrot '{output_path}'; \
-                     elif command -v import >/dev/null 2>&1; then \
-                         import -window root '{output_path}'; \
-                     else \
-                         echo 'NO_SCREENSHOT_TOOL' >&2; exit 1; \
-                     fi"
-                ),
-            ])
-        } else {
-            None
-        }
     }
 
     /// Execute the screenshot capture and return the result.
@@ -81,63 +50,57 @@ impl ScreenshotTool {
         }
 
         let output_path = self.security.workspace_dir.join(&safe_name);
-        let output_str = output_path.to_string_lossy().to_string();
 
-        let Some(mut cmd_args) = Self::screenshot_command(&output_str) else {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Screenshot not supported on this platform".into()),
-            });
-        };
-
-        // macOS region flags
-        if cfg!(target_os = "macos")
-            && let Some(region) = args.get("region").and_then(|v| v.as_str())
-        {
-            match region {
-                "selection" => cmd_args.insert(1, "-s".into()),
-                "window" => cmd_args.insert(1, "-w".into()),
-                _ => {} // ignore unknown regions
-            }
-        }
-
-        let program = cmd_args.remove(0);
         let result = tokio::time::timeout(
             Duration::from_secs(SCREENSHOT_TIMEOUT_SECS),
-            tokio::process::Command::new(&program)
-                .args(&cmd_args)
-                .output(),
+            tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+                let screens = Screen::all()
+                    .map_err(|e| anyhow::Error::msg(format!("Failed to list screens: {e}")))?;
+                let primary_screen = screens
+                    .iter()
+                    .find(|s| s.display_info.is_primary)
+                    .or_else(|| screens.first())
+                    .ok_or_else(|| anyhow::Error::msg("No screens found to capture"))?;
+
+                let captured_img = primary_screen.capture().map_err(|e| {
+                    anyhow::Error::msg(format!("Failed to capture screenshot: {e}"))
+                })?;
+
+                let mut bytes = Vec::new();
+                captured_img
+                    .write_to(
+                        &mut std::io::Cursor::new(&mut bytes),
+                        screenshots::image::ImageOutputFormat::Png,
+                    )
+                    .map_err(|e| {
+                        anyhow::Error::msg(format!("Failed to encode screenshot to PNG: {e}"))
+                    })?;
+
+                Ok(bytes)
+            }),
         )
         .await;
 
         match result {
-            Ok(Ok(output)) => {
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    if stderr.contains("NO_SCREENSHOT_TOOL") {
-                        return Ok(ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(
-                                "No screenshot tool found. Install gnome-screenshot, scrot, or ImageMagick."
-                                    .into(),
-                            ),
-                        });
-                    }
+            Ok(Ok(Ok(png_bytes))) => {
+                if let Err(e) = tokio::fs::write(&output_path, &png_bytes).await {
                     return Ok(ToolResult {
                         success: false,
                         output: String::new(),
-                        error: Some(format!("Screenshot command failed: {stderr}")),
+                        error: Some(format!("Failed to write screenshot file: {e}")),
                     });
                 }
-
                 Self::read_and_encode(&output_path).await
             }
+            Ok(Ok(Err(e))) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Failed to execute screenshot: {e}")),
+            }),
             Ok(Err(e)) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Failed to execute screenshot command: {e}")),
+                error: Some(format!("Failed to execute screenshot task: {e}")),
             }),
             Err(_) => Ok(ToolResult {
                 success: false,
@@ -296,15 +259,6 @@ mod tests {
         assert!(spec.parameters.is_object());
     }
 
-    #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn screenshot_command_exists() {
-        let cmd = ScreenshotTool::screenshot_command("/tmp/test.png");
-        assert!(cmd.is_some());
-        let args = cmd.unwrap();
-        assert!(!args.is_empty());
-    }
-
     #[tokio::test]
     async fn screenshot_rejects_shell_injection_filename() {
         let tool = ScreenshotTool::new(test_security());
@@ -314,15 +268,5 @@ mod tests {
             .unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("unsafe for shell execution"));
-    }
-
-    #[test]
-    fn screenshot_command_contains_output_path() {
-        let cmd = ScreenshotTool::screenshot_command("/tmp/my_screenshot.png").unwrap();
-        let joined = cmd.join(" ");
-        assert!(
-            joined.contains("/tmp/my_screenshot.png"),
-            "Command should contain the output path"
-        );
     }
 }

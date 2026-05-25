@@ -9,11 +9,13 @@ const MAX_RESULTS: usize = 1000;
 /// Search for files by glob pattern within the workspace.
 pub struct GlobSearchTool {
     security: Arc<SecurityPolicy>,
+    has_fd: bool,
 }
 
 impl GlobSearchTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self { security }
+        let has_fd = which::which("fd").is_ok();
+        Self { security, has_fd }
     }
 }
 
@@ -89,17 +91,6 @@ impl Tool for GlobSearchTool {
             .to_string_lossy()
             .to_string();
 
-        let entries = match glob::glob(&full_pattern) {
-            Ok(paths) => paths,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Invalid glob pattern: {e}")),
-                });
-            }
-        };
-
         let workspace = &self.security.workspace_dir;
         let workspace_canon = match std::fs::canonicalize(workspace) {
             Ok(p) => p,
@@ -108,6 +99,86 @@ impl Tool for GlobSearchTool {
                     success: false,
                     output: String::new(),
                     error: Some(format!("Cannot resolve workspace directory: {e}")),
+                });
+            }
+        };
+
+        if self.has_fd {
+            let mut cmd = tokio::process::Command::new("fd");
+            cmd.arg("--hidden")
+                .arg("--glob")
+                .arg("-p")
+                .arg(&full_pattern)
+                .arg("--type")
+                .arg("f")
+                .current_dir(&workspace_canon);
+
+            let output_opt = match cmd.output().await {
+                Ok(output) if output.status.success() => Some(output),
+                _ => None,
+            };
+            if let Some(output) = output_opt {
+                let stdout_str = String::from_utf8_lossy(&output.stdout);
+                let mut results = Vec::new();
+                let mut truncated = false;
+                for line in stdout_str.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let resolved_path = workspace_canon.join(line);
+                    let resolved = match std::fs::canonicalize(&resolved_path) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+
+                    if !self.security.is_resolved_path_readable(&resolved) {
+                        continue;
+                    }
+
+                    if let Ok(rel) = resolved.strip_prefix(&workspace_canon) {
+                        results.push(rel.to_string_lossy().to_string());
+                    }
+
+                    if results.len() >= MAX_RESULTS {
+                        truncated = true;
+                        break;
+                    }
+                }
+
+                results.sort();
+
+                let output_text = if results.is_empty() {
+                    format!("No files matching pattern '{pattern}' found in workspace.")
+                } else {
+                    use std::fmt::Write;
+                    let mut buf = results.join("\n");
+                    if truncated {
+                        let _ = write!(
+                            buf,
+                            "\n\n[Results truncated: showing first {MAX_RESULTS} of more matches]"
+                        );
+                    }
+                    let _ = write!(buf, "\n\nTotal: {} files", results.len());
+                    buf
+                };
+
+                return Ok(ToolResult {
+                    success: true,
+                    output: output_text,
+                    error: None,
+                });
+            }
+        }
+
+        let entries = match glob::glob(&full_pattern) {
+            Ok(paths) => paths,
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Invalid glob pattern: {e}")),
                 });
             }
         };

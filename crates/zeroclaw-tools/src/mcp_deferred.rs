@@ -225,6 +225,25 @@ impl Default for ActivatedToolSet {
     }
 }
 
+/// Identify duplicate MCP tools that should be hidden from the LLM.
+pub fn is_duplicate_mcp_tool(name: &str) -> bool {
+    let prefixes = [
+        "filesystem__",
+        "fd__",
+        "ripgrep__",
+        "repomix__",
+        "git__",
+        "playwright__",
+        "puppeteer__",
+        "fetch__",
+        "firecrawl__",
+        "tavily__",
+        "duckduckgo__",
+        "brave-search__",
+    ];
+    prefixes.iter().any(|prefix| name.starts_with(prefix))
+}
+
 // ── System prompt helper ─────────────────────────────────────────────────
 
 /// Build the `<available-deferred-tools>` section for the system prompt.
@@ -246,6 +265,9 @@ pub fn build_deferred_tools_section(deferred: &DeferredMcpToolSet) -> String {
     );
     out.push_str("<available-deferred-tools>\n");
     for stub in &deferred.stubs {
+        if is_duplicate_mcp_tool(&stub.prefixed_name) {
+            continue;
+        }
         out.push_str(&stub.prefixed_name);
         out.push_str(" - ");
         out.push_str(&stub.description);

@@ -18,8 +18,8 @@ const DEFAULT_MAX_RESULTS: usize = 5;
 
 /// Built-in tool that fetches full schemas for deferred MCP tools.
 pub struct ToolSearchTool {
-    deferred: DeferredMcpToolSet,
-    activated: Arc<Mutex<ActivatedToolSet>>,
+    pub deferred: DeferredMcpToolSet,
+    pub activated: Arc<Mutex<ActivatedToolSet>>,
 }
 
 impl ToolSearchTool {
@@ -29,10 +29,30 @@ impl ToolSearchTool {
             activated,
         }
     }
+
+    /// Activate a deferred MCP tool by name on demand.
+    pub fn activate_deferred_mcp_tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self.activated.lock().unwrap().get(name) {
+            return Some(tool);
+        }
+        if let Some(tool_box) = self.deferred.activate(name) {
+            let tool_arc: Arc<dyn Tool> = Arc::from(tool_box);
+            self.activated
+                .lock()
+                .unwrap()
+                .activate(name.to_string(), Arc::clone(&tool_arc));
+            return Some(tool_arc);
+        }
+        None
+    }
 }
 
 #[async_trait]
 impl Tool for ToolSearchTool {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     fn name(&self) -> &str {
         "tool_search"
     }

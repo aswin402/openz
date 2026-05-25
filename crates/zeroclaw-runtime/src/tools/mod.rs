@@ -51,11 +51,13 @@ pub use zeroclaw_tools::browser_open::BrowserOpenTool;
 pub use zeroclaw_tools::calculator::CalculatorTool;
 pub use zeroclaw_tools::canvas::{ALLOWED_CONTENT_TYPES, MAX_CONTENT_SIZE};
 pub use zeroclaw_tools::canvas::{CanvasStore, CanvasTool};
+pub use zeroclaw_tools::cdp_browser::CdpBrowserTool;
 pub use zeroclaw_tools::claude_code::ClaudeCodeTool;
 pub use zeroclaw_tools::claude_code_runner::ClaudeCodeRunnerTool;
 pub use zeroclaw_tools::cli_discovery::{DiscoveredCli, discover_cli_tools};
 pub use zeroclaw_tools::cloud_ops::CloudOpsTool;
 pub use zeroclaw_tools::cloud_patterns::CloudPatternsTool;
+pub use zeroclaw_tools::codebase_snapshot::CodebaseSnapshotTool;
 pub use zeroclaw_tools::codex_cli::CodexCliTool;
 pub use zeroclaw_tools::composio::ComposioTool;
 pub use zeroclaw_tools::content_search::ContentSearchTool;
@@ -64,7 +66,9 @@ pub use zeroclaw_tools::discord_search::DiscordSearchTool;
 pub use zeroclaw_tools::escalate::EscalateToHumanTool;
 pub use zeroclaw_tools::file_edit::FileEditTool;
 pub use zeroclaw_tools::file_write::FileWriteTool;
+pub use zeroclaw_tools::fs_event_monitor::FsEventMonitorTool;
 pub use zeroclaw_tools::gemini_cli::GeminiCliTool;
+pub use zeroclaw_tools::git_native::GitNativeTool;
 pub use zeroclaw_tools::git_operations::GitOperationsTool;
 pub use zeroclaw_tools::glob_search::GlobSearchTool;
 pub use zeroclaw_tools::google_workspace::GoogleWorkspaceTool;
@@ -80,7 +84,7 @@ pub use zeroclaw_tools::linkedin::LinkedInTool;
 pub use zeroclaw_tools::llm_task::LlmTaskTool;
 pub use zeroclaw_tools::mcp_client::McpRegistry;
 pub use zeroclaw_tools::mcp_deferred::{
-    ActivatedToolSet, DeferredMcpToolSet, build_deferred_tools_section,
+    ActivatedToolSet, DeferredMcpToolSet, build_deferred_tools_section, is_duplicate_mcp_tool,
 };
 pub use zeroclaw_tools::mcp_tool::McpToolWrapper;
 pub use zeroclaw_tools::memory_export::MemoryExportTool;
@@ -92,6 +96,7 @@ pub use zeroclaw_tools::microsoft365::Microsoft365Tool;
 pub use zeroclaw_tools::model_routing_config::ModelRoutingConfigTool;
 pub use zeroclaw_tools::notion_tool::NotionTool;
 pub use zeroclaw_tools::opencode_cli::OpenCodeCliTool;
+pub use zeroclaw_tools::os_input::OSInputTool;
 #[cfg(feature = "rag-pdf")]
 pub use zeroclaw_tools::pdf_read::PdfReadTool;
 pub use zeroclaw_tools::pipeline::PipelineTool;
@@ -106,10 +111,12 @@ pub use zeroclaw_tools::sessions::{
     SessionDeleteTool, SessionResetTool, SessionsCurrentTool, SessionsHistoryTool,
     SessionsListTool, SessionsSendTool,
 };
+pub use zeroclaw_tools::sys_info::SysInfoTool;
 pub use zeroclaw_tools::text_browser::TextBrowserTool;
 pub use zeroclaw_tools::tool_search::ToolSearchTool;
 pub use zeroclaw_tools::weather_tool::WeatherTool;
 pub use zeroclaw_tools::web_fetch::WebFetchTool;
+pub use zeroclaw_tools::web_parse::WebParseTool;
 pub use zeroclaw_tools::web_search_tool::WebSearchTool;
 pub use zeroclaw_tools::wrappers::{PathGuardedTool, RateLimitedTool};
 
@@ -850,6 +857,24 @@ pub fn all_tools_with_runtime(
 
     // Vision tools are always available
     tool_arcs.push(Arc::new(ScreenshotTool::new(security.clone())));
+    tool_arcs.push(Arc::new(OSInputTool::new(security.clone())));
+    tool_arcs.push(Arc::new(CdpBrowserTool::new(security.clone())));
+    tool_arcs.push(Arc::new(SysInfoTool::new(security.clone())));
+    tool_arcs.push(Arc::new(WebParseTool::new(security.clone())));
+    tool_arcs.push(Arc::new(GitNativeTool::new(security.clone())));
+    tool_arcs.push(Arc::new(FsEventMonitorTool::new(security.clone())));
+    tool_arcs.push(Arc::new(RateLimitedTool::new(
+        PathGuardedTool::new(
+            CodebaseSnapshotTool::new(security.clone()),
+            security.clone(),
+        )
+        .with_extractor(|args| {
+            args.get("target_dir")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        }),
+        security.clone(),
+    )));
     tool_arcs.push(Arc::new(RateLimitedTool::new(
         PathGuardedTool::new(ImageInfoTool::new(security.clone()), security.clone()),
         security.clone(),

@@ -27,6 +27,16 @@ zeroclaw-hardware = { path = "crates/zeroclaw-hardware", version = "0.8.0-beta-1
 zeroclaw-tool-call-parser = { path = "crates/zeroclaw-tool-call-parser", version = "0.8.0-beta-1" }
 zeroclaw-macros = { path = "crates/zeroclaw-macros", version = "0.8.0-beta-1" }
 aardvark-sys = { path = "crates/aardvark-sys", version = "0.1.0" }
+screenshots = "0.8.10"
+rdev = "0.5.3"
+enigo = "0.3.0"
+chromiumoxide = { git = "https://github.com/mattsse/chromiumoxide" }
+sysinfo = "0.33.0"
+walkdir = "2.5.0"
+scraper = "0.20.0"
+tree-sitter = "0.24.4"
+git2 = "0.21.0"
+notify = "8.2.0"
 
 [package]
 name = "zeroclawlabs"

@@ -1447,6 +1447,7 @@ pub async fn run_tool_call_loop(
                 }
             }
         }
+        tool_specs.retain(|spec| !crate::tools::is_duplicate_mcp_tool(&spec.name));
         let known_tool_names: HashSet<String> = tool_specs
             .iter()
             .map(|tool| tool.name.to_ascii_lowercase())

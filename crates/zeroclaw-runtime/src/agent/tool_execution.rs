@@ -149,7 +149,7 @@ async fn execute_one_tool_inner(
     let tool_future = tool
         .execute(call_arguments.clone())
         .instrument(tool_span.clone());
-    let tool_result = if let Some(token) = cancellation_token {
+    let mut tool_result = if let Some(token) = cancellation_token {
         tokio::select! {
             () = token.cancelled() => return Err(ToolLoopCancelled.into()),
             result = tool_future => result,
@@ -157,6 +157,87 @@ async fn execute_one_tool_inner(
     } else {
         tool_future.await
     };
+
+    // If the native tool execution failed, automatically try to execute the duplicate MCP fallback tool
+    let is_failure = match &tool_result {
+        Ok(r) => !r.success,
+        Err(_) => true,
+    };
+    if is_failure {
+        if let Some(mcp_tool_name) =
+            find_fallback_tool_name(call_name, tools_registry, activated_tools)
+        {
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Invoke)
+                    .with_category(::zeroclaw_log::EventCategory::Tool),
+                &format!(
+                    "Native tool '{}' failed. Automatically falling back to MCP tool '{}'.",
+                    call_name, mcp_tool_name
+                )
+            );
+            let translated_args =
+                translate_arguments(call_name, &mcp_tool_name, call_arguments.clone());
+
+            // Try to find the fallback tool instance
+            let mut fallback_tool = None;
+
+            // 1. Try to find/activate from deferred set first via ToolSearchTool
+            if let Some(tool_search) = find_tool(tools_registry, "tool_search") {
+                if let Some(tool_search_tool) = tool_search
+                    .as_any()
+                    .and_then(|any| any.downcast_ref::<crate::tools::ToolSearchTool>())
+                {
+                    if let Some(act_tool) =
+                        tool_search_tool.activate_deferred_mcp_tool(&mcp_tool_name)
+                    {
+                        fallback_tool = Some(act_tool);
+                    }
+                }
+            }
+
+            // 2. Try to find in activated_tools
+            if fallback_tool.is_none() {
+                if let Some(at) = activated_tools {
+                    fallback_tool = at.lock().unwrap().get(&mcp_tool_name);
+                }
+            }
+
+            // Execute the fallback
+            let fallback_result = if let Some(ref f_tool) = fallback_tool {
+                let f_future = f_tool
+                    .execute(translated_args)
+                    .instrument(tool_span.clone());
+                if let Some(token) = cancellation_token {
+                    tokio::select! {
+                        () = token.cancelled() => return Err(ToolLoopCancelled.into()),
+                        res = f_future => res,
+                    }
+                } else {
+                    f_future.await
+                }
+            } else if let Some(f_tool) = find_tool(tools_registry, &mcp_tool_name) {
+                let f_future = f_tool
+                    .execute(translated_args)
+                    .instrument(tool_span.clone());
+                if let Some(token) = cancellation_token {
+                    tokio::select! {
+                        () = token.cancelled() => return Err(ToolLoopCancelled.into()),
+                        res = f_future => res,
+                    }
+                } else {
+                    f_future.await
+                }
+            } else {
+                Err(anyhow::anyhow!(
+                    "Fallback MCP tool '{}' found but failed to load",
+                    mcp_tool_name
+                ))
+            };
+
+            tool_result = fallback_result;
+        }
+    }
 
     let _result_guard = tool_span.entered();
     match tool_result {
@@ -340,4 +421,203 @@ pub async fn execute_tools_sequential(
     }
 
     Ok(outcomes)
+}
+
+fn find_fallback_tool_name(
+    native_tool_name: &str,
+    tools_registry: &[Box<dyn Tool>],
+    activated_tools: Option<&std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
+) -> Option<String> {
+    // List of (target_name, is_exact) to try
+    let fallbacks = match native_tool_name {
+        "file_read" => vec![("filesystem__read_file", true)],
+        "file_write" => vec![("filesystem__write_file", true)],
+        "file_edit" => vec![("filesystem__edit_file", true)],
+        "glob_search" => vec![("fd__", false), ("ripgrep__", false)],
+        "codebase_snapshot" => vec![("repomix__", false)],
+        "git_native" | "git_operations" => vec![("git__", false)],
+        "browser" | "cdp_browser" => vec![("playwright__", false), ("puppeteer__", false)],
+        "web_fetch" | "web_parse" => vec![("fetch__", false), ("firecrawl__", false)],
+        "web_search_tool" | "web_search" => vec![
+            ("tavily__", false),
+            ("duckduckgo__", false),
+            ("brave-search__", false),
+        ],
+        _ => return None,
+    };
+
+    let check_match = |name: &str| -> bool {
+        for (target, is_exact) in &fallbacks {
+            if *is_exact {
+                if name == *target {
+                    return true;
+                }
+            } else {
+                if name.starts_with(*target) {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+
+    // 1. Check activated_tools first
+    if let Some(at) = activated_tools {
+        let guard = at.lock().unwrap();
+        for name in guard.tool_names() {
+            if check_match(name) {
+                return Some(name.to_string());
+            }
+        }
+    }
+
+    // 2. Check tools_registry next
+    for tool in tools_registry {
+        let name = tool.name();
+        if check_match(name) {
+            return Some(name.to_string());
+        }
+    }
+
+    // 3. Check stubs in ToolSearchTool
+    if let Some(tool_search) = find_tool(tools_registry, "tool_search") {
+        if let Some(tool_search_tool) = tool_search
+            .as_any()
+            .and_then(|any| any.downcast_ref::<crate::tools::ToolSearchTool>())
+        {
+            for stub in &tool_search_tool.deferred.stubs {
+                if check_match(&stub.prefixed_name) {
+                    return Some(stub.prefixed_name.clone());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn translate_arguments(
+    native_tool: &str,
+    mcp_tool: &str,
+    args: serde_json::Value,
+) -> serde_json::Value {
+    match (native_tool, mcp_tool) {
+        ("file_read", _) => {
+            if let Some(path) = args.get("path") {
+                serde_json::json!({ "path": path.clone() })
+            } else {
+                args
+            }
+        }
+        ("file_write", _) => {
+            if let Some(path) = args.get("path") {
+                if let Some(content) = args.get("content") {
+                    serde_json::json!({
+                        "path": path.clone(),
+                        "content": content.clone()
+                    })
+                } else {
+                    args
+                }
+            } else {
+                args
+            }
+        }
+        ("glob_search", _) => {
+            if let Some(pattern) = args.get("pattern") {
+                serde_json::json!({
+                    "pattern": pattern.clone(),
+                    "glob": pattern.clone(),
+                    "query": pattern.clone()
+                })
+            } else {
+                args
+            }
+        }
+        _ => args,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use zeroclaw_api::tool::ToolResult;
+
+    struct MockTool {
+        name: String,
+        success: bool,
+        output: String,
+    }
+
+    impl ::zeroclaw_api::attribution::Attributable for MockTool {
+        fn role(&self) -> ::zeroclaw_api::attribution::Role {
+            ::zeroclaw_api::attribution::Role::Tool(::zeroclaw_api::attribution::ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            &self.name
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            "mock tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            if self.success {
+                Ok(ToolResult {
+                    success: true,
+                    output: self.output.clone(),
+                    error: None,
+                })
+            } else {
+                Ok(ToolResult {
+                    success: false,
+                    output: "Native failed".to_string(),
+                    error: Some("Error executing".to_string()),
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_fallback_on_failure() {
+        let native = MockTool {
+            name: "file_read".to_string(),
+            success: false,
+            output: "".to_string(),
+        };
+        let fallback = MockTool {
+            name: "filesystem__read_file".to_string(),
+            success: true,
+            output: "Fallback content".to_string(),
+        };
+
+        let tools_registry: Vec<Box<dyn Tool>> = vec![Box::new(native), Box::new(fallback)];
+
+        let observer = crate::observability::NoopObserver;
+
+        let result = execute_one_tool(
+            "file_read",
+            json!({"path": "test.txt"}),
+            None,
+            &tools_registry,
+            None,
+            &observer,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.output, "Fallback content");
+    }
 }
