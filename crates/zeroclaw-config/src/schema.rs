@@ -6833,6 +6833,12 @@ pub struct PluginsConfig {
     /// Maximum number of plugins that can be loaded
     #[serde(default = "default_max_plugins")]
     pub max_plugins: usize,
+    /// Default execution timeout in milliseconds for WASM plugin tools (default: 30000)
+    #[serde(default = "default_default_timeout_ms")]
+    pub default_timeout_ms: u64,
+    /// Default WebAssembly instruction execution fuel limit for WASM plugin tools (default: 10000000)
+    #[serde(default = "default_default_fuel_limit")]
+    pub default_fuel_limit: u64,
     /// Plugin signature verification security settings
     #[serde(default)]
     #[nested]
@@ -6878,6 +6884,14 @@ fn default_max_plugins() -> usize {
     50
 }
 
+fn default_default_timeout_ms() -> u64 {
+    30000
+}
+
+fn default_default_fuel_limit() -> u64 {
+    10000000
+}
+
 impl Default for PluginsConfig {
     fn default() -> Self {
         Self {
@@ -6885,6 +6899,8 @@ impl Default for PluginsConfig {
             plugins_dir: default_plugins_dir(),
             auto_discover: false,
             max_plugins: default_max_plugins(),
+            default_timeout_ms: default_default_timeout_ms(),
+            default_fuel_limit: default_default_fuel_limit(),
             security: PluginSecurityConfig::default(),
         }
     }

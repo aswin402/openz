@@ -18,6 +18,8 @@ pub struct WasmTool {
     parameters_schema: Value,
     wasm_path: PathBuf,
     permissions: Vec<PluginPermission>,
+    timeout_ms: u64,
+    fuel_limit: u64,
 }
 
 impl WasmTool {
@@ -27,6 +29,8 @@ impl WasmTool {
         parameters_schema: Value,
         wasm_path: PathBuf,
         permissions: Vec<PluginPermission>,
+        timeout_ms: u64,
+        fuel_limit: u64,
     ) -> Self {
         Self {
             name,
@@ -34,6 +38,8 @@ impl WasmTool {
             parameters_schema,
             wasm_path,
             permissions,
+            timeout_ms,
+            fuel_limit,
         }
     }
 
@@ -44,9 +50,16 @@ impl WasmTool {
         permissions: Vec<PluginPermission>,
         fallback_name: String,
         fallback_description: String,
+        timeout_ms: u64,
+        fuel_limit: u64,
     ) -> Self {
         // Try to load metadata from the WASM module itself.
-        let (name, description, schema) = match runtime::create_plugin(&wasm_path, &permissions) {
+        let (name, description, schema) = match runtime::create_plugin(
+            &wasm_path,
+            &permissions,
+            Some(timeout_ms),
+            Some(fuel_limit),
+        ) {
             Ok(mut plugin) => match runtime::call_tool_metadata(&mut plugin) {
                 Ok(meta) => (meta.name, meta.description, meta.parameters_schema),
                 Err(e) => {
@@ -89,6 +102,8 @@ impl WasmTool {
             parameters_schema: schema,
             wasm_path,
             permissions,
+            timeout_ms,
+            fuel_limit,
         }
     }
 }
@@ -127,10 +142,17 @@ impl Tool for WasmTool {
         let wasm_path = self.wasm_path.clone();
         let permissions = self.permissions.clone();
         let args_json = serde_json::to_vec(&args)?;
+        let timeout_ms = self.timeout_ms;
+        let fuel_limit = self.fuel_limit;
 
         // Extism Plugin is !Send, so we must create it inside spawn_blocking.
         tokio::task::spawn_blocking(move || {
-            let mut plugin = runtime::create_plugin(&wasm_path, &permissions)?;
+            let mut plugin = runtime::create_plugin(
+                &wasm_path,
+                &permissions,
+                Some(timeout_ms),
+                Some(fuel_limit),
+            )?;
             runtime::call_execute(&mut plugin, &args_json)
         })
         .await?

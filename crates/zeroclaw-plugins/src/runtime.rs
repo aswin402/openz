@@ -168,8 +168,13 @@ fn handle_env_read(
 
 // ── Plugin creation and invocation ────────────────────────────────
 
-/// Create an Extism plugin from a WASM file with the given permissions.
-pub fn create_plugin(wasm_path: &Path, permissions: &[PluginPermission]) -> Result<extism::Plugin> {
+/// Create an Extism plugin from a WASM file with the given permissions, timeout and fuel limit.
+pub fn create_plugin(
+    wasm_path: &Path,
+    permissions: &[PluginPermission],
+    timeout_ms: Option<u64>,
+    fuel_limit: Option<u64>,
+) -> Result<extism::Plugin> {
     let perm_set: HashSet<PluginPermission> = permissions.iter().cloned().collect();
     let ctx = UserData::new(HostContext {
         permissions: perm_set,
@@ -185,9 +190,21 @@ pub fn create_plugin(wasm_path: &Path, permissions: &[PluginPermission]) -> Resu
 
     let env_fn = Function::new("zc_env_read", [PTR], [PTR], ctx, handle_env_read);
 
-    let manifest = Manifest::new([Wasm::file(wasm_path)]);
+    let mut manifest = Manifest::new([Wasm::file(wasm_path)]);
+    if let Some(timeout) = timeout_ms {
+        manifest = manifest.with_timeout(std::time::Duration::from_millis(timeout));
+    }
 
-    Plugin::new(manifest, [http_fn, env_fn], true)
+    let mut builder = PluginBuilder::new(manifest)
+        .with_wasi(true)
+        .with_functions([http_fn, env_fn]);
+
+    if let Some(fuel) = fuel_limit {
+        builder = builder.with_fuel_limit(fuel);
+    }
+
+    builder
+        .build()
         .with_context(|| format!("failed to load WASM plugin from {}", wasm_path.display()))
 }
 
@@ -275,7 +292,7 @@ mod tests {
 
     #[test]
     fn missing_wasm_file_returns_error() {
-        let result = create_plugin(Path::new("/nonexistent/plugin.wasm"), &[]);
+        let result = create_plugin(Path::new("/nonexistent/plugin.wasm"), &[], None, None);
         assert!(result.is_err());
     }
 
@@ -298,7 +315,7 @@ mod tests {
                 return;
             };
             let perms = vec![PluginPermission::HttpClient, PluginPermission::EnvRead];
-            let mut plugin = create_plugin(&path, &perms).unwrap();
+            let mut plugin = create_plugin(&path, &perms, None, None).unwrap();
             let meta = call_tool_metadata(&mut plugin).unwrap();
             assert_eq!(meta.name, "image_gen_fal");
             assert!(meta.description.contains("image"));
@@ -315,7 +332,7 @@ mod tests {
         fn execute_missing_prompt() {
             let Some(path) = wasm_path() else { return };
             let perms = vec![PluginPermission::HttpClient, PluginPermission::EnvRead];
-            let mut plugin = create_plugin(&path, &perms).unwrap();
+            let mut plugin = create_plugin(&path, &perms, None, None).unwrap();
             let args = serde_json::to_vec(&serde_json::json!({})).unwrap();
             let result = call_execute(&mut plugin, &args).unwrap();
             assert!(!result.success);
@@ -326,7 +343,7 @@ mod tests {
         fn execute_invalid_size() {
             let Some(path) = wasm_path() else { return };
             let perms = vec![PluginPermission::HttpClient, PluginPermission::EnvRead];
-            let mut plugin = create_plugin(&path, &perms).unwrap();
+            let mut plugin = create_plugin(&path, &perms, None, None).unwrap();
             let args =
                 serde_json::to_vec(&serde_json::json!({"prompt": "test", "size": "bad"})).unwrap();
             let result = call_execute(&mut plugin, &args).unwrap();
@@ -338,7 +355,7 @@ mod tests {
         fn execute_invalid_model_traversal() {
             let Some(path) = wasm_path() else { return };
             let perms = vec![PluginPermission::HttpClient, PluginPermission::EnvRead];
-            let mut plugin = create_plugin(&path, &perms).unwrap();
+            let mut plugin = create_plugin(&path, &perms, None, None).unwrap();
             let args =
                 serde_json::to_vec(&serde_json::json!({"prompt": "test", "model": "../../evil"}))
                     .unwrap();
@@ -356,7 +373,7 @@ mod tests {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::remove_var("FAL_API_KEY") };
             let perms = vec![PluginPermission::HttpClient, PluginPermission::EnvRead];
-            let mut plugin = create_plugin(&path, &perms).unwrap();
+            let mut plugin = create_plugin(&path, &perms, None, None).unwrap();
             let args = serde_json::to_vec(&serde_json::json!({"prompt": "a sunset"})).unwrap();
             let err = call_execute(&mut plugin, &args).unwrap_err();
             let msg = format!("{err:#}");
@@ -373,13 +390,92 @@ mod tests {
             let Some(path) = wasm_path() else { return };
             // Only HttpClient granted — EnvRead missing
             let perms = vec![PluginPermission::HttpClient];
-            let mut plugin = create_plugin(&path, &perms).unwrap();
+            let mut plugin = create_plugin(&path, &perms, None, None).unwrap();
             let args = serde_json::to_vec(&serde_json::json!({"prompt": "a sunset"})).unwrap();
             let err = call_execute(&mut plugin, &args).unwrap_err();
             let msg = format!("{err:#}");
             assert!(
                 msg.contains("permission") || msg.contains("env_read"),
                 "expected permission-denied error, got: {msg}"
+            );
+        }
+    }
+
+    #[cfg(test)]
+    mod sandboxing {
+        use super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        fn create_temp_wasm(wat_content: &str) -> NamedTempFile {
+            let wasm = wat::parse_str(wat_content).unwrap();
+            let mut temp = NamedTempFile::new().unwrap();
+            temp.write_all(&wasm).unwrap();
+            temp
+        }
+
+        #[test]
+        fn test_fuel_exhaustion() {
+            // An infinite loop in WAT
+            let wat = r#"
+                (module
+                    (func (export "run_loop")
+                        (loop $loop
+                            (br $loop)
+                        )
+                    )
+                )
+            "#;
+            let temp = create_temp_wasm(wat);
+
+            // Try creating the plugin with a very small fuel limit (e.g. 1000)
+            let mut plugin = create_plugin(temp.path(), &[], None, Some(1000)).unwrap();
+
+            // Executing the infinite loop should return an error (trap)
+            let result = plugin.call::<&str, String>("run_loop", "");
+            assert!(
+                result.is_err(),
+                "Expected execution to trap due to fuel exhaustion"
+            );
+            let err_msg = format!("{:?}", result.err().unwrap());
+            assert!(
+                err_msg.contains("fuel")
+                    || err_msg.contains("trap")
+                    || err_msg.contains("exhausted")
+                    || err_msg.contains("interrupt"),
+                "Expected fuel exhaustion error, got: {}",
+                err_msg
+            );
+        }
+
+        #[test]
+        fn test_timeout_execution() {
+            // An infinite loop in WAT
+            let wat = r#"
+                (module
+                    (func (export "run_loop")
+                        (loop $loop
+                            (br $loop)
+                        )
+                    )
+                )
+            "#;
+            let temp = create_temp_wasm(wat);
+
+            // Create plugin with 50ms timeout and no fuel limit
+            let mut plugin = create_plugin(temp.path(), &[], Some(50), None).unwrap();
+
+            let result = plugin.call::<&str, String>("run_loop", "");
+            assert!(result.is_err(), "Expected execution to time out");
+            let err_msg = format!("{:?}", result.err().unwrap());
+            assert!(
+                err_msg.contains("timeout")
+                    || err_msg.contains("deadline")
+                    || err_msg.contains("time out")
+                    || err_msg.contains("timeout")
+                    || err_msg.contains("interrupt"),
+                "Expected timeout error, got: {}",
+                err_msg
             );
         }
     }

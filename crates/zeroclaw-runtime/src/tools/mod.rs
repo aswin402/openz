@@ -1168,6 +1168,8 @@ pub fn all_tools_with_runtime(
                             manifest.permissions.clone(),
                             manifest.name.clone(),
                             manifest.description.clone().unwrap_or_default(),
+                            config.plugins.default_timeout_ms,
+                            config.plugins.default_fuel_limit,
                         )));
                     }
                     ::zeroclaw_log::record!(
