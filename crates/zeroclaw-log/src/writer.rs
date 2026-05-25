@@ -22,6 +22,7 @@ use serde_json::Value;
 struct WriterState {
     policy: ResolvedPolicy,
     write_lock: Mutex<()>,
+    last_hash: Mutex<String>,
 }
 
 static WRITER: OnceLock<parking_lot::RwLock<Option<Arc<WriterState>>>> = OnceLock::new();
@@ -32,6 +33,52 @@ fn slot() -> &'static parking_lot::RwLock<Option<Arc<WriterState>>> {
 
 fn current_state() -> Option<Arc<WriterState>> {
     slot().read().clone()
+}
+
+fn read_last_hash(path: &Path) -> String {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
+    if !path.exists() {
+        return String::new();
+    }
+
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return String::new(),
+    };
+
+    let reader = BufReader::new(file);
+    let mut last_line = None;
+    for l in reader.lines().map_while(Result::ok) {
+        let trimmed = l.trim();
+        if !trimmed.is_empty() {
+            last_line = Some(trimmed.to_string());
+        }
+    }
+
+    if let Some(line) = last_line
+        && let Ok(event) = serde_json::from_str::<LogEvent>(&line)
+        && let Some(hash) = event.hash
+    {
+        return hash;
+    }
+
+    String::new()
+}
+
+fn compute_next_hash(previous_hash: &str, event: &mut LogEvent) -> String {
+    use sha2::{Digest, Sha256};
+
+    event.hash = None;
+    let serialized = serde_json::to_string(event).unwrap_or_default();
+
+    let mut hasher = Sha256::new();
+    hasher.update(previous_hash.as_bytes());
+    hasher.update(serialized.as_bytes());
+    let result = hasher.finalize();
+
+    result.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Initialize (or disable) the persistence writer from config. Idempotent.
@@ -52,9 +99,16 @@ pub fn init_from_config(config: &LogConfig, workspace_dir: &Path) {
         );
     }
 
+    let last_hash = if policy.storage.is_enabled() && policy.path.exists() {
+        read_last_hash(&policy.path)
+    } else {
+        String::new()
+    };
+
     let state = Arc::new(WriterState {
         policy,
         write_lock: Mutex::new(()),
+        last_hash: Mutex::new(last_hash),
     });
     *slot().write() = Some(state);
 }
@@ -72,7 +126,37 @@ pub fn runtime_trace_path() -> Option<PathBuf> {
 /// (the schema migration tool, tests) can invoke it too, but production
 /// code should go through the macro so the `tracing::event!` carries the
 /// correct `file:line` source info.
-pub fn record_event(event: LogEvent) {
+pub fn record_event(mut event: LogEvent) {
+    let Some(state) = current_state() else {
+        let value = match serde_json::to_value(&event) {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(
+                    target: "zeroclaw_log_internal",
+                    error = ?err,
+                    "log: event serialization failed"
+                );
+                return;
+            }
+        };
+
+        observer_bridge::forward(&event);
+
+        if let Some(hook) = current_broadcast_hook() {
+            let _ = hook.send(value);
+        }
+        return;
+    };
+
+    let _guard = state.write_lock.lock();
+
+    if state.policy.storage.is_enabled() {
+        let mut last_hash_guard = state.last_hash.lock();
+        let next_hash = compute_next_hash(&last_hash_guard, &mut event);
+        event.hash = Some(next_hash.clone());
+        *last_hash_guard = next_hash;
+    }
+
     let value = match serde_json::to_value(&event) {
         Ok(v) => v,
         Err(err) => {
@@ -91,14 +175,11 @@ pub fn record_event(event: LogEvent) {
         let _ = hook.send(value.clone());
     }
 
-    let Some(state) = current_state() else {
-        return;
-    };
     if !state.policy.storage.is_enabled() {
         return;
     }
 
-    if let Err(err) = append_line(&state, &value) {
+    if let Err(err) = append_line_locked(&state, &value) {
         tracing::warn!(
             target: "zeroclaw_log_internal",
             error = ?err,
@@ -108,9 +189,7 @@ pub fn record_event(event: LogEvent) {
     }
 }
 
-fn append_line(state: &Arc<WriterState>, value: &Value) -> Result<()> {
-    let _guard = state.write_lock.lock();
-
+fn append_line_locked(state: &Arc<WriterState>, value: &Value) -> Result<()> {
     if let Some(parent) = state.policy.path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating log directory {}", parent.display()))?;
@@ -295,5 +374,76 @@ mod tests {
             !path.exists(),
             "no file should exist when storage is disabled"
         );
+    }
+
+    #[test]
+    fn hash_chain_verification_and_integrity() {
+        let _guard = WRITER_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        install_writer(tmp.path(), 10);
+
+        for i in 0..5 {
+            let mut ev = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
+            ev.message = Some(format!("event-{i}"));
+            record_event(ev);
+        }
+
+        let path = runtime_trace_path().unwrap();
+
+        // The log integrity check should succeed initially
+        let verified = crate::reader::verify_log_integrity(&path).unwrap();
+        assert!(verified, "initial log integrity check failed");
+
+        // Now let's tamper with the file by modifying a log message in the middle
+        let contents = fs::read_to_string(&path).unwrap();
+        let mut lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
+        assert_eq!(lines.len(), 5);
+
+        // Parse line 2, modify message, and put it back
+        let mut val: Value = serde_json::from_str(&lines[2]).unwrap();
+        val["message"] = Value::String("tampered message".to_string());
+        lines[2] = serde_json::to_string(&val).unwrap();
+
+        let tampered_contents = lines.join("\n") + "\n";
+        fs::write(&path, tampered_contents).unwrap();
+
+        // The log integrity check should now fail!
+        let verified_after_tamper = crate::reader::verify_log_integrity(&path).unwrap();
+        assert!(
+            !verified_after_tamper,
+            "tampered log check unexpectedly succeeded"
+        );
+    }
+
+    #[test]
+    fn hash_chain_preserves_across_reinitialization() {
+        let _guard = WRITER_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        install_writer(tmp.path(), 10);
+
+        // Write 3 events
+        for i in 0..3 {
+            let mut ev = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
+            ev.message = Some(format!("event-{i}"));
+            record_event(ev);
+        }
+
+        let path = runtime_trace_path().unwrap();
+        let verified = crate::reader::verify_log_integrity(&path).unwrap();
+        assert!(verified);
+
+        // Reinitialize the writer pointing to the same directory (simulating restart)
+        install_writer(tmp.path(), 10);
+
+        // Write 2 more events
+        for i in 3..5 {
+            let mut ev = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
+            ev.message = Some(format!("event-{i}"));
+            record_event(ev);
+        }
+
+        // Verify the entire file is still a single continuous valid hash chain!
+        let verified_full = crate::reader::verify_log_integrity(&path).unwrap();
+        assert!(verified_full, "hash chain broken across reinitialization");
     }
 }

@@ -335,6 +335,10 @@ pub struct LogEvent {
     /// rows get migrated in place at daemon startup.
     #[serde(default = "default_schema_version")]
     pub schema_version: u8,
+
+    /// Cryptographic hash linking this log entry to the previous one in a Merkle Hash-Chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 fn default_schema_version() -> u8 {
@@ -365,6 +369,7 @@ impl LogEvent {
             message: None,
             attributes: Value::Null,
             schema_version: LogEvent::SCHEMA_VERSION,
+            hash: None,
         }
     }
 

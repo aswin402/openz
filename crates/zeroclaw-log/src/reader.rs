@@ -248,6 +248,70 @@ pub fn current_log_path() -> Option<PathBuf> {
     crate::writer::runtime_trace_path()
 }
 
+/// Verify the cryptographic integrity of a log file.
+///
+/// Walks through the log file from the first line to the last line,
+/// checking that each event contains a valid `hash` field that matches
+/// the SHA-256 hash of (previous_hash || serialized_event_without_hash).
+///
+/// Returns `Ok(true)` if all hashes are correct and intact, `Ok(false)`
+/// if any hash is missing or incorrect, and `Err` if an IO or parsing error occurs.
+pub fn verify_log_integrity(path: &Path) -> Result<bool> {
+    use sha2::{Digest, Sha256};
+
+    if !path.exists() {
+        return Ok(true);
+    }
+
+    let file = File::open(path).with_context(|| format!("opening log: {}", path.display()))?;
+    let reader = BufReader::new(file);
+
+    let mut current_expected_prev_hash = String::new();
+
+    for (idx, line) in reader.lines().enumerate() {
+        let line = line.context("reading log line")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut event = serde_json::from_str::<LogEvent>(trimmed)
+            .with_context(|| format!("parsing event at line {}", idx + 1))?;
+
+        let actual_hash = match event.hash.take() {
+            Some(h) => h,
+            None => {
+                tracing::warn!("Verification failed: missing hash at line {}", idx + 1);
+                return Ok(false);
+            }
+        };
+
+        // Re-serialize without hash
+        let serialized =
+            serde_json::to_string(&event).context("serializing event for verification")?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(current_expected_prev_hash.as_bytes());
+        hasher.update(serialized.as_bytes());
+        let result = hasher.finalize();
+        let expected_hash: String = result.iter().map(|b| format!("{b:02x}")).collect();
+
+        if actual_hash != expected_hash {
+            tracing::warn!(
+                "Verification failed: hash mismatch at line {}. Expected: {}, Actual: {}",
+                idx + 1,
+                expected_hash,
+                actual_hash
+            );
+            return Ok(false);
+        }
+
+        current_expected_prev_hash = actual_hash;
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
