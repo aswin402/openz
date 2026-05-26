@@ -58,6 +58,8 @@ pub(crate) mod doctor;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "agent-runtime")]
+pub mod hands;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod hardware;
 #[cfg(feature = "agent-runtime")]
 pub(crate) mod health;
@@ -734,5 +736,35 @@ pub enum SopCommands {
     Show {
         /// Name of the SOP to show
         name: String,
+    },
+}
+
+/// Hands (pre-built task blueprints) management subcommands
+///
+/// Pre-edit ritual:
+/// This is the source of truth — created here. It represents the CLI commands (HandsCommands) for managing and scheduling "Hands" task blueprints.
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HandsCommands {
+    /// List all pre-built blueprint templates
+    List,
+    /// Bind/schedule a pre-packaged blueprint package to an agent
+    #[command(long_about = "\
+Bind/schedule a pre-packaged blueprint package to an agent.
+
+Examples:
+  zeroclaw hands bind daily-osint --agent researcher
+  zeroclaw hands bind site-monitoring --agent ops-bot --schedule '*/15 * * * *'")]
+    Bind {
+        /// Blueprint template ID to bind (e.g. daily-osint, site-monitoring, lead-generation)
+        blueprint_id: String,
+        /// Configured agent alias the task runs as
+        #[arg(short = 'a', long = "agent")]
+        agent_alias: String,
+        /// Optional cron schedule expression override (defaults to template recommended schedule)
+        #[arg(short = 's', long = "schedule")]
+        schedule: Option<String>,
+        /// Optional model override to run the task
+        #[arg(long)]
+        model: Option<String>,
     },
 }

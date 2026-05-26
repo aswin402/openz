@@ -28,6 +28,7 @@ pub mod cost;
 pub mod cron;
 pub mod daemon;
 pub mod doctor;
+pub mod hands;
 pub mod health;
 pub mod heartbeat;
 pub mod hooks;
