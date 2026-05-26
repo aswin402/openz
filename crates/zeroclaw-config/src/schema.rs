@@ -9368,7 +9368,7 @@ pub struct McpBundleConfig {
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "runtime"]
 pub struct RuntimeConfig {
-    /// Runtime kind (`native` | `docker`).
+    /// Runtime kind (`native` | `docker` | `ssh`).
     #[serde(default = "default_runtime_kind")]
     pub kind: String,
 
@@ -9376,6 +9376,11 @@ pub struct RuntimeConfig {
     #[serde(default)]
     #[nested]
     pub docker: DockerRuntimeConfig,
+
+    /// SSH runtime settings (used when `kind = "ssh"`).
+    #[serde(default)]
+    #[nested]
+    pub ssh: SshRuntimeConfig,
 
     /// Global reasoning override for model_providers that expose explicit controls.
     /// - `None`: model_provider default behavior
@@ -9422,6 +9427,37 @@ pub struct DockerRuntimeConfig {
     pub allowed_workspace_roots: Vec<String>,
 }
 
+/// SSH runtime configuration (`[runtime.ssh]` section).
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "runtime.ssh"]
+pub struct SshRuntimeConfig {
+    /// Remote host address.
+    #[serde(default)]
+    pub host: String,
+
+    /// SSH port (default: 22).
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+
+    /// SSH username.
+    #[serde(default)]
+    pub username: String,
+
+    /// Optional path to the private key file.
+    #[serde(default)]
+    pub key_path: Option<String>,
+
+    /// Optional remote workspace directory path.
+    /// If set, the runtime will change directory to this path on the remote host before executing commands.
+    #[serde(default)]
+    pub workspace_dir: Option<String>,
+
+    /// Optional extra CLI arguments to pass to the `ssh` command.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
 fn default_runtime_kind() -> String {
     "native".into()
 }
@@ -9442,6 +9478,10 @@ fn default_docker_cpu_limit() -> Option<f64> {
     Some(1.0)
 }
 
+fn default_ssh_port() -> u16 {
+    22
+}
+
 impl Default for DockerRuntimeConfig {
     fn default() -> Self {
         Self {
@@ -9456,11 +9496,25 @@ impl Default for DockerRuntimeConfig {
     }
 }
 
+impl Default for SshRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: default_ssh_port(),
+            username: String::new(),
+            key_path: None,
+            workspace_dir: None,
+            extra_args: Vec::new(),
+        }
+    }
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             kind: default_runtime_kind(),
             docker: DockerRuntimeConfig::default(),
+            ssh: SshRuntimeConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
         }
@@ -16083,6 +16137,7 @@ enabled = true
 
     #[test]
     async fn test_dynamic_mcp_loading() {
+        let _env_guard = env_override_lock().await;
         let temp = TempDir::new().expect("temp dir");
         let config_path = temp.path().join("config.toml");
 
