@@ -63,12 +63,14 @@
 - [MCP (Model Context Protocol)](./tools/mcp.md)
 - [Browser automation](./tools/browser.md)
 - [Skills](./tools/skills.md)
+- [Hands task blueprints](./tools/blueprints.md)
 
 # Security
 
 - [Overview](./security/overview.md)
 - [Autonomy levels](./security/autonomy.md)
 - [Sandboxing](./security/sandboxing.md)
+- [Remote execution (SSH)](./security/remote-execution.md)
 - [Tool receipts](./security/tool-receipts.md)
 
 # Operations
